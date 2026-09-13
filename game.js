@@ -614,8 +614,9 @@ class GameScene extends Phaser.Scene {
             const RO = CONFIG.ROSTER || {};
             if (RO.ENABLED !== false) {
                 const fs2 = RO.FRAME || 48;
-                for (const f of (RO.SHEETS || [])) {
-                    this.load.spritesheet(f, f, { frameWidth: fs2, frameHeight: fs2 });
+                for (const sh of (RO.SHEETS || [])) {
+                    const f = typeof sh === 'string' ? sh : sh.FILE;
+                    if (f) this.load.spritesheet(f, f, { frameWidth: fs2, frameHeight: fs2 });
                 }
             }
             const FN = TM.FENCE || {};
@@ -1917,10 +1918,16 @@ console.log(
     }
 
     // ── Watered ground ───────────────────────────────────────────────────────
-    // Bind every PLANTED cell to the canal cell(s) that will water it, so the
-    // soil under the crops darkens as the ditches fill. Only planted cells are
-    // bound: bare land — paths, verges, the ground under trees and rocks — is
-    // not being irrigated, so the wet colour marks the worked field exactly.
+    // Bind each cell to the canal cell(s) that will water it, so the ground
+    // darkens as the ditches fill. Two passes, and they mark different things:
+    //
+    //   1. the TILLED PATCH under each plant — the worked soil itself
+    //   2. the PLAIN GROUND, which is the tile under each plant (the patch has a
+    //      ragged outline, so its ground shows through along every edge) plus a
+    //      ring around the ditches and the plants
+    //
+    // Ground beyond those rings stays dry, however near its closest canal: the
+    // colour has to say "the water reached here", not "the level finished".
     // Runs after createTunnel because the flood's cell map is what it searches.
     //
     // The binding is NEAREST-by-Manhattan and keeps EVERY cell at that
@@ -1939,8 +1946,13 @@ console.log(
         // TILLED PATCH under each plant — not the field. Bare land is not being
         // irrigated, so the wet colour ends up marking the worked ground exactly,
         // and its outline is the crop patch's outline.
+        // EVERY plant is bound to its canal, whether or not it has a patch to
+        // darken. The patch list is the subset that does; the damp GROUND pass
+        // below reads the full one, because a crop drawn on bare earth — turf,
+        // or a tree — still has to show the water arriving somehow, and its own
+        // ground tile is the only thing left to show it on.
+        const watched = seg.cropWater = [];
         for (const cr of (seg.crops || [])) {
-            if (!cr.tilled) continue;
             const c = cr.col, r = cr.row;
             // Nearest canal cell(s) by Manhattan distance — ALL of them at that
             // distance, so a patch lying between two ditches turns for whichever
@@ -1951,7 +1963,9 @@ console.log(
                 if (d > bd) continue;
                 if (d < bd) { bd = d; watch = [cc]; } else watch.push(cc);
             }
-            if (watch.length) list.push({ cr, watch, wet: false, fade: null });
+            if (!watch.length) continue;
+            watched.push({ cr, watch });
+            if (cr.tilled) list.push({ cr, watch, wet: false, fade: null });
         }
 
         // THE GROUND THE WATER ACTUALLY TOUCHES — the ditch's banks, and the
@@ -1970,16 +1984,19 @@ console.log(
         const B = W.BARE || {};
         if (B.ENABLED === false || TM.TERRAIN_GROUND_DAMP === undefined) return;
         const ground = seg.groundSprites || [];
-        const planted = new Set((seg.crops || []).map((cr) => cr.col + ',' + cr.row));
         const bare = seg.bareGround = [];
         const want = new Map();     // 'c,r' -> the canal cells it waits on
 
         // A cell can be reached from several sources — two ditches, or a ditch
         // and a plant. It keeps ALL of their canal cells and turns for whichever
         // fills first, the same rule the tilled patches follow.
+        const near = new Set();     // claimed by a ring: no spread delay
+        const seed = new Map();     // 'c,r' -> the canal cell the fill came from
+        let atWater = true;         // every claim until the fill runs is a ring's
         const claim = (c, r, cells) => {
             if (c < 0 || r < 0 || c >= g.cols || r >= g.rows) return;
             const k = c + ',' + r;
+            if (atWater) near.add(k);
             let w = want.get(k);
             if (!w) want.set(k, w = []);
             for (const cc of cells) if (w.indexOf(cc) < 0) w.push(cc);
@@ -1994,17 +2011,72 @@ console.log(
         const cring = B.CANAL_RING !== undefined ? B.CANAL_RING : 1;
         if (cring >= 0) for (const cc of canal) ring(cc.col, cc.row, cring, [cc]);
 
+        // THE GROUND UNDER EACH PLANT, always — not just the ring around it.
+        //
+        // A tilled patch is drawn over its ground tile with a RAGGED outline, so
+        // the tile underneath shows through all along the patch's edge. Left dry
+        // while the ring around it went damp, every plant sat in a pale halo.
+        //
+        // Claimed on its own rather than as part of the ring below, so it still
+        // happens when CROP_RING is turned down to nothing.
+        for (const e of watched) claim(e.cr.col, e.cr.row, e.watch);
+
         // The ground around each plant, waiting on whatever waters the plant —
         // so the patch and its surround turn together and read as one wet spot.
         const pring = B.CROP_RING !== undefined ? B.CROP_RING : 1;
-        if (pring >= 0) for (const e of list) ring(e.cr.col, e.cr.row, pring, e.watch);
+        if (pring >= 0) for (const e of watched) ring(e.cr.col, e.cr.row, pring, e.watch);
+
+        // EVERYTHING THE RINGS DID NOT REACH — the open field between the
+        // ditches and past the last row of plants.
+        //
+        // A flood fill out of the canal cells, so each tile ends up holding the
+        // ONE canal cell nearest it by ground travelled, and `hops` is how far
+        // away that is. Nearest-by-fill rather than nearest-by-formula because
+        // it is the same walk for every tile whatever the map's shape, and it
+        // costs one visit each.
+        //
+        // Distance is what keeps the wash honest. Everything above waits only on
+        // its canal cell filling; these tiles wait on that AND on the ground
+        // between, so the damp travels outward at a readable pace instead of a
+        // whole field turning the moment one ditch fills.
+        const hops = new Map();
+        atWater = false;
+        if (B.WHOLE_FIELD !== false) {
+            const q = [];
+            for (const cc of canal) {
+                const k = cc.col + ',' + cc.row;
+                if (hops.has(k)) continue;
+                hops.set(k, 0);
+                q.push(cc.col, cc.row, 0);
+                seed.set(k, cc);
+            }
+            const STEP = [1, 0, -1, 0, 0, 1, 0, -1];
+            for (let i = 0; i < q.length; i += 3) {
+                const c = q[i], r = q[i + 1], d = q[i + 2] + 1;
+                const from = seed.get(c + ',' + r);
+                for (let j = 0; j < 8; j += 2) {
+                    const nc = c + STEP[j], nr = r + STEP[j + 1];
+                    if (nc < 0 || nr < 0 || nc >= g.cols || nr >= g.rows) continue;
+                    const k = nc + ',' + nr;
+                    if (hops.has(k)) continue;
+                    hops.set(k, d);
+                    seed.set(k, from);
+                    claim(nc, nr, [from]);
+                    q.push(nc, nr, d);
+                }
+            }
+        }
 
         for (const [k, watch] of want) {
-            if (planted.has(k) || !watch.length) continue;
+            if (!watch.length) continue;
             const [c, r] = k.split(',').map(Number);
             const spr = ground[r * g.cols + c];
             if (!spr) continue;
-            bare.push({ spr, watch, col: c, row: r, due: undefined, fade: null });
+            // A tile a ring already claimed is AT the water, not out from it, so
+            // it carries no distance however far the fill had to walk to reach
+            // it. `near` is set by every ring claim above.
+            const d = near.has(k) ? 0 : (hops.get(k) || 0);
+            bare.push({ spr, watch, col: c, row: r, hops: d, due: undefined, fade: null });
         }
     }
 
@@ -2032,8 +2104,13 @@ console.log(
                     for (const cc of e.watch) if (cc.progress > at) { on = true; break; }
                     if (!on) continue;
                     // Its own wait, from the cell's hash — the field fills in
-                    // unevenly, the way ground soaks rather than switches.
-                    e.due = this._rndRange(B.DELAY_MS || [500, 1400]);
+                    // unevenly, the way ground soaks rather than switches — plus
+                    // the ground between it and the ditch. The second term is
+                    // what makes the damp travel: a tile ten rows out starts its
+                    // wait when its ditch fills, like everything else, but the
+                    // wash has to cross those ten rows to get there.
+                    e.due = this._rndRange(B.DELAY_MS || [500, 1400])
+                          + (e.hops || 0) * (B.SPREAD_MS !== undefined ? B.SPREAD_MS : 110);
                     continue;
                 }
                 e.due -= dt;
@@ -2829,29 +2906,28 @@ console.log(
         const end = () => { if (done) done(); };
         if (R.ENABLED === false || !ro || ro.filled >= ro.slots.length) { end(); return; }
 
-        const at = (R.ICONS || {})[name];
-        if (at === undefined) {
+        // THE SAME LOOKUP THE TALLY CELLS USE. It was resolved separately here,
+        // with its own copy of the sheet arithmetic — so the roster and the
+        // tally could disagree about where an icon lived, and did.
+        const ic = this._iconOf(name);
+        if (!ic) {
             // The level still counts — its slot is spent, just blank. Said out
             // loud because an empty slot otherwise reads as a bug in the roster
             // rather than as a missing drawing.
-            console.warn(`[roster] "${name}" has no icon in ROSTER.ICONS — its slot will be blank`);
+            console.warn(`[roster] "${name}" has no icon — its slot will be blank`);
         }
-        const per   = Math.max(1, R.PER_SHEET || 10);
-        const sheet = at === undefined ? null : (R.SHEETS || [])[Math.floor(at / per)];
 
         const slot = ro.slots[ro.filled++];
         this._paintSlot(slot, true);
         // The caption lands WITH the icon, so it is written at each arrival
         // rather than here — except when there is no icon to wait for.
-        if (!sheet || !this.textures.exists(sheet)) {
+        if (!ic) {
             this._setRosterProduce(slot, name);
             end(); return;
         }
 
         const fit = ro.size * (R.ICON_FRAC !== undefined ? R.ICON_FRAC : 0.78);
-        // The frame number says both WHICH SHEET and which cell of it, so adding
-        // a sheet is appending a file and numbering on from where the last left.
-        const spr = this._addB(this.add.image(slot.x, slot.y, sheet, at % per)
+        const spr = this._addB(this.add.image(slot.x, slot.y, ic.sheet, ic.frame)
             .setScrollFactor(0)
             .setDisplaySize(fit, fit)
             .setDepth((R.DEPTH !== undefined ? R.DEPTH : 99000) + 1), null);
@@ -4216,8 +4292,33 @@ console.log(
 
     // Where an icon for `name` lives on the UI sheets — one table for the roster
     // strip and the level tally alike, so a crop drawn once is drawn everywhere.
+    // NAME -> WHERE ITS ICON LIVES, built once from the sheets' own lists.
+    //
+    // The lists are written to match the artwork; this is the shape that is
+    // fast to read. Inverting them at load rather than authoring the inverse by
+    // hand is what keeps a frame number from ever disagreeing with the image —
+    // there is no frame number to get wrong.
+    _iconIndex() {
+        if (this._iconIx) return this._iconIx;
+        const ix = this._iconIx = new Map();
+        for (const sh of ((CONFIG.ROSTER || {}).SHEETS || [])) {
+            if (!sh || typeof sh === 'string' || !sh.FILE || !sh.ICONS) continue;
+            const names = sh.ICONS.split(',');
+            for (let i = 0; i < names.length; i++) {
+                const n = names[i].trim();
+                // An empty name is a reserved slot — it holds its position so
+                // the icons after it keep theirs, and answers to nothing.
+                if (n && !ix.has(n)) ix.set(n, { sheet: sh.FILE, frame: i });
+            }
+        }
+        return ix;
+    }
+
     _iconOf(name) {
         const R = CONFIG.ROSTER || {};
+        // THE SHEETS FIRST. A name in a sheet needs no table entry at all.
+        const hit = this._iconIndex().get(name);
+        if (hit) return this.textures.exists(hit.sheet) ? hit : null;
         let at = (R.ICONS || {})[name];
         // NOT IN THE TABLE: an animal's produce names its own icon on its
         // species. That field was loaded but never read here — so an egg's
@@ -4231,16 +4332,8 @@ console.log(
                 }
             }
         }
-        if (at === undefined) return null;
-        // A STRING names a texture of its own — art that is not 48px square and
-        // would have to be padded or cropped to join the grid.
-        if (typeof at === 'string') {
-            return this.textures.exists(at) ? { sheet: at, frame: 0 } : null;
-        }
-        const per = Math.max(1, R.PER_SHEET || 10);
-        const sheet = (R.SHEETS || [])[Math.floor(at / per)];
-        if (!sheet || !this.textures.exists(sheet)) return null;
-        return { sheet, frame: at % per };
+        if (typeof at !== 'string') return null;
+        return this.textures.exists(at) ? { sheet: at, frame: 0 } : null;
     }
 
     // THE LEVEL'S TALLY: one cell per crop, its icon, and how many are left.
@@ -4566,7 +4659,7 @@ console.log(
         // The plant gives as it comes off, the way it does when he brushes past —
         // the same spring, so a pick and a brush cannot look like two mechanisms.
         const sh = H.SHAKE !== undefined ? H.SHAKE : 0.7;
-        if (sh > 0) this._brushCrop(seg, cr.col + ',' + cr.row, 0, sh);
+        if (sh > 0) this._brushCrop(seg, cr.col + ',' + cr.row, 0, sh, true);
         // Sideways as well as up: a pick is a hand taking it, not a balloon let go.
         const side = (this._cellHash(cr.col, cr.row, 10) - 0.5) * 2 *
                      (H.DRIFT !== undefined ? H.DRIFT : 0.18) * tile;
@@ -4846,6 +4939,32 @@ console.log(
     // out a fruit's ripening, mid-crossing, arriving — and a walk cycle playing
     // under a farmer who is standing still reads as the animation having come
     // loose from the character.
+    // HOW FAST HE WALKS WHEN THERE IS NOTHING LEFT TO WAIT FOR.
+    //
+    // The dig and the flood are things the player watches happen and cannot
+    // hurry; picking is not. Once the canal is cut through, the water has
+    // stopped spreading and every plant is grown, the field can only get
+    // emptier — so the walk between plants is dead time and he covers it at
+    // RUSH_MUL. His stride follows the distance he moves, so his legs keep up
+    // on their own; nothing about the pick itself changes.
+    //
+    // LATCHED, because it can only ever turn on: crops do not un-grow, and the
+    // check walks every plant in the field. Once true it costs one lookup.
+    _fieldRush(seg) {
+        const HV = (CONFIG.ROAD.TILEMAP.FARMER || {}).HARVEST || {};
+        const mul = HV.RUSH_MUL !== undefined ? HV.RUSH_MUL : 1;
+        if (mul === 1 || !seg) return 1;
+        if (!seg.rushing) {
+            const tn = seg.tunnel;
+            // `open` is breakthrough — this level's main canal is cut end to
+            // end. _floodDone says the water has finished running, and
+            // _cropsDone that it reached everything worth reaching.
+            if (!tn || !tn.open || !this._floodDone(tn) || !this._cropsDone(seg)) return 1;
+            seg.rushing = true;
+        }
+        return mul;
+    }
+
     _farmerStride(f, moved) {
         const F = CONFIG.ROAD.TILEMAP.FARMER || {};
         // Per FRAME, so it scales with the step: below a fraction of a tile
@@ -5083,7 +5202,7 @@ console.log(
         const dx = tx - spr.x, dy = ty - spr.y;
         const d  = Math.max(1e-3, Math.hypot(dx, dy));
         const step = (F.SPEED || 1.1) * (HV.SPEED_MUL !== undefined ? HV.SPEED_MUL : 2.4)
-                   * tile * dt;
+                   * this._fieldRush(seg) * tile * dt;
         const there = d <= Math.max(step, tile * 0.2);
         // AT THE NEAR END OF THE DECK: the next leg is the deck itself.
         if (there && f.crossTo && !f.crossTo.onDeck) {
@@ -5207,11 +5326,16 @@ console.log(
     // same side.
     // `mul` scales the knock — a pig pushing past a plant is not a person
     // walking through it, and the difference should be visible.
-    _brushCrop(seg, cell, dx, mul) {
-        const S = (CONFIG.ROAD.TILEMAP.CROP_SWAY) || {};
+    _brushCrop(seg, cell, dx, mul, picked) {
+        const TM = CONFIG.ROAD.TILEMAP;
+        const S = (TM.CROP_SWAY) || {};
         if (S.ENABLED === false) return;
         const cr = seg.cropAt && seg.cropAt.get(cell);
         if (!cr || cr.stage < (S.MIN_STAGE !== undefined ? S.MIN_STAGE : 2)) return;
+        // Some crops only move when PICKED — a trunk does not bend because
+        // someone walked through it. The pick asks for the shake explicitly, so
+        // it lands either way; a brush defers to the class.
+        if (!picked && !this._cropTrait(cr.lay && cr.lay.cls, 'SWAY', true)) return;
 
         const w   = 2 * Math.PI * (S.HZ || 2.2);
         const dir = Math.abs(dx) > 1e-3 ? Math.sign(dx)
@@ -5224,8 +5348,20 @@ console.log(
         // is already pulling it back before it tops out — at DAMP 0.32 that is
         // barely half — so handing the knob straight to velocity would make it
         // read as a lie the moment anyone measured it.
-        cr.swayV += (S.LEAN_DEG !== undefined ? S.LEAN_DEG : 11)
-                  * (mul === undefined ? 1 : mul) / this._swayPeak(w) * dir;
+        // A BEND picks a side and leans that way; a SQUASH has no side — it
+        // only ever goes down first, so the impulse is negative and `dir` is
+        // meaningless to it. Both then ring on the same spring.
+        const amp = cr.squash ? -(S.SQUASH_PCT !== undefined ? S.SQUASH_PCT : 9)
+                              : (S.LEAN_DEG !== undefined ? S.LEAN_DEG : 11) * dir;
+        cr.swayV += amp * (mul === undefined ? 1 : mul) / this._swayPeak(w);
+        // The growth spring owns scaleY between stages, and the squash is about
+        // to take it over. Only a pick during the last stage's pop can overlap,
+        // but two things tweening one property is a bug waiting for a slow
+        // frame, so the growth spring yields.
+        if (cr.squash) {
+            if (cr.tw)  { cr.tw.stop();  cr.tw  = null; }
+            if (cr.twF) { cr.twF.stop(); cr.twF = null; }
+        }
         if (!cr.swaying) {                       // one entry per plant, however
             cr.swaying = true;                   // many times it is brushed
             (seg.sway || (seg.sway = [])).push(cr);
@@ -5270,6 +5406,7 @@ console.log(
         const w = 2 * Math.PI * (S.HZ || 2.2);
         const k = w * w;                                  // stiffness
         const d = 2 * (S.DAMP !== undefined ? S.DAMP : 0.32) * w;   // damping
+        const wide = S.SQUASH_WIDE !== undefined ? S.SQUASH_WIDE : 0.55;
 
         for (const seg of this.segments || []) {
             const list = seg.sway;
@@ -5285,10 +5422,23 @@ console.log(
                     cr.sway = 0; cr.swayV = 0; cr.swaying = false;
                     list.splice(i, 1);
                 }
-                cr.sprite.setAngle(cr.baseAngle + cr.sway);
-                // The fruit hangs on the plant, so it leans with it. The support
-                // does not — it is a stake in the ground, not part of the plant.
-                if (cr.fruit) cr.fruit.setAngle(cr.baseAngle + cr.sway);
+                if (cr.squash) {
+                    // Against the plant's CURRENT rest size, not its birth size:
+                    // a stage change can have moved it since, and springing back
+                    // to a stale number would resize the plant on every shake.
+                    const base = this._cropScale(cr, cr.stage);
+                    const q    = cr.sway / 100;          // per cent -> fraction
+                    const sx   = base * (1 - q * wide);  // shorter is wider
+                    const sy   = base * (1 + q);
+                    cr.sprite.setScale(sx, sy);
+                    if (cr.fruit) cr.fruit.setScale(sx, sy);
+                } else {
+                    cr.sprite.setAngle(cr.baseAngle + cr.sway);
+                    // The fruit hangs on the plant, so it leans with it. The
+                    // support does not — it is a stake in the ground, not part
+                    // of the plant.
+                    if (cr.fruit) cr.fruit.setAngle(cr.baseAngle + cr.sway);
+                }
             }
         }
     }
@@ -5847,10 +5997,21 @@ console.log(
                 this.textures.addSpriteSheet(key, img,
                     { frameWidth: TM.CROP_FRAME_W || 128, frameHeight: img.height });
             }
+            const lay   = this._cropLayout(crop, key);
+            const per   = (TM.CROP_SCALE || {})[crop];
+            const scale = per !== undefined ? per
+                                            : this._cropTrait(lay.cls, 'SCALE', 1);
             return {
                 crop, key,
-                lay: this._cropLayout(crop, key),
-                sc:  g.tile / this.textures.getFrame(key, 0).width,   // 128 -> one cell
+                lay,
+                // A frame's WIDTH is one tile — times how big this crop draws.
+                // That is the only lever: the frame size cannot do it, since a
+                // wider frame is simply fitted into the same tile.
+                //
+                // The size comes from the crop's CLASS, so every tree is the
+                // same height without anyone saying so. A per-crop SCALE entry
+                // overrides it, for the one variety that breaks its class.
+                sc:  g.tile / this.textures.getFrame(key, 0).width * scale,
             };
         };
         const art = new Map();
@@ -5930,9 +6091,14 @@ console.log(
                 const BS = TM.CROP_BASE || {};
                 const ev = this._edgeVariants()[edge] || { off: 0, angle: 0 };
                 let tilled = null;
-                // ...but never under PASTURE. Turf is not worked ground, and the
-                // furrowed square is what makes a field read as a plot.
-                if (BS.ENABLED !== false && lay.cls !== 'pasture'
+                // ...but only where the crop's class wants worked ground. Turf
+                // does not, and neither does a tree — see CLASS_TRAITS for why.
+                //
+                // Nothing is lost by leaving it out. The damp ground is a
+                // separate pass built from the crop list, so the cell under each
+                // plant and the ring around it still darken when its water
+                // arrives — the same way pasture has always shown it.
+                if (BS.ENABLED !== false && this._cropTrait(lay.cls, 'TILLED', true)
                         && TM.TERRAIN_TILLED !== undefined
                         && this.textures.exists('terrain')) {
                     tilled = this._addB(this.add.image(
@@ -5979,7 +6145,7 @@ console.log(
                 // second is a full plant: it grows, sways and waits on the same
                 // water as the first.
                 const PS  = TM.PASTURE || {};
-                const turf = lay.cls === 'pasture';
+                const turf = this._cropTrait(lay.cls, 'SCATTER', false);
                 const jit2 = turf ? (PS.JITTER !== undefined ? PS.JITTER : 0.32) * g.tile : 0;
                 const dbl  = turf && this._cellHash(c, r, 12) <
                                      (PS.EXTRA !== undefined ? PS.EXTRA : 0.2);
@@ -6010,6 +6176,9 @@ console.log(
                 const rec = { watch: best, stage: 1, timer: 0, sprite: spr, sc: psc, crop, edge,
                              col: c, row: r,
                              baseAngle, sway: 0, swayV: 0,
+                             // Resolved once here rather than per frame: the
+                             // spring runs on every shaking plant every tick.
+                             squash: this._cropTrait(lay.cls, 'SHAKE', 'bend') === 'squash',
                              lay, support: k ? null : support, fruit: null, twF: null,
                              tilled: k ? null : tilled, tilledOff: ev.off, tilledAngle: ev.angle,
                              growMul: 1 + (this._cellHash(c, r, 4) - 0.5) * 2 * (V.GROW_VAR || 0),
@@ -6026,6 +6195,17 @@ console.log(
                 }
             }
         }
+    }
+
+    // WHAT THIS CROP'S CLASS SAYS ABOUT ONE TRAIT — or `dflt` if its class has
+    // no opinion, which is the case for every ordinary vegetable.
+    //
+    // Everything that varies by class is asked for through here, so no caller
+    // ever tests a class by name. That is the whole point: a class is data, and
+    // adding one means adding a row to CLASS_TRAITS, not an `if` in four files.
+    _cropTrait(cls, name, dflt) {
+        const T = (CONFIG.ROAD.TILEMAP.CROP_TRAITS || {})[cls];
+        return (T && T[name] !== undefined) ? T[name] : dflt;
     }
 
     // What each frame of a crop sheet is for.
@@ -6125,7 +6305,10 @@ console.log(
     // sprite when a stage lands, the spring that springs back to it, and the
     // squash it springs up from.
     _cropScale(cr, stage) {
-        const s = CONFIG.ROAD.TILEMAP.CROP_STAGE_SCALE;
+        const TM = CONFIG.ROAD.TILEMAP;
+        // Not every crop widens at maturity — see CLASS_TRAITS.
+        if (!this._cropTrait(cr.lay && cr.lay.cls, 'STAGE_SPREAD', true)) return cr.sc;
+        const s = TM.CROP_STAGE_SCALE;
         const k = (s && s[stage - 1] !== undefined) ? s[stage - 1] : 1;
         return cr.sc * k;
     }

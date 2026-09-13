@@ -97,7 +97,7 @@ var CONFIG = {
     DEBUG_PERF: true,        // log object / tween / timer / texture counts each
                              // time the world rebases (once per level). Climbing
                              // numbers = something is outliving its band
-    BATTERY_START_LEVEL: 1,
+    BATTERY_START_LEVEL: 10,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
     // BACKGROUND: {
@@ -211,9 +211,14 @@ var CONFIG = {
         PRODUCE: {
             ENABLED: true,
             SIZE:    13,         // px @ design scale, under the block name's 15
-            COLOR:  '#4a3a26',
-            STROKE: '#fffdf6',   // pale, not dark: this sits on open ground below
-                                 // the strip rather than over it
+            // The same white-on-dark as the block name above it and the level
+            // number on the tally cells. It was inverted — dark ink, pale
+            // outline — on the reasoning that it sits on open ground rather
+            // than over the strip. But it reads as a different KIND of text
+            // that way, and it is the same kind: a caption on a roster cell.
+            // Legibility over ground is the stroke's job either way.
+            COLOR:  '#ffffff',
+            STROKE: '#2b2013',
             STROKE_W: 3,
             GAP:     3,          // below the slots
         },
@@ -254,36 +259,46 @@ var CONFIG = {
         // ── The icon sheets ─────────────────────────────────────────────
         // One sheet per two unlock blocks, so a short session never downloads
         // the icons for a stretch it will not reach — a player who stops at
-        // level 5 pulls 240x96 instead of every icon in the game.
+        // level 5 never pulls the orchard's.
         //
-        // Named for the LAND, not the contents or the level range: blocks get
-        // rebalanced and a goat may end up in the orchard, but the orchard is
-        // still the orchard. Sheet index is floor((level-1)/PER_SHEET), so the
-        // order of this list is the order of the run.
+        // Numbered rather than named for their contents, because blocks get
+        // rebalanced and the sheet a thing lives in is nobody's business: an
+        // icon is found by NAME, and which file holds it falls out of the
+        // lists below.
+        // EACH SHEET LISTS WHAT IS IN IT, IN THE ORDER IT IS DRAWN — left to
+        // right, top to bottom. The position in the list IS the frame number,
+        // so nothing here says "12" and nothing has to be renumbered when the
+        // artwork changes: insert a name, insert an icon, done.
+        //
+        // A sheet holds whatever its stretch of the run needs, however many
+        // that is — produce icons included. The grid does not have to be ten,
+        // and the game works the columns out from the image width and FRAME,
+        // so no rows or columns are declared either.
+        //
+        // Leave a name EMPTY to reserve a blank slot in the middle of a group;
+        // the positions after it do not shift.
         SHEETS: [
-            'graphics/ui/icons/icons_farm.webp',   // 1-10  vegetables, then livestock
+            { FILE:  'graphics/ui/icons/icons_01.webp',
+              ICONS: 'tomato, potato, egg-plant, green-beans, melon,' +
+                     'cow, chicken, bunny, sheep, pig,' +
+                     'churn, egg' },
+            { FILE:  'graphics/ui/icons/icons_02.webp',
+              ICONS: 'mango, cherry, banana, orange, pomegranate' },
         ],
         FRAME:     48,       // one icon, square. 1.2x the ~40px it draws at
-        PER_SHEET: 10,       // 5 x 2
 
-        // WHICH FRAME EACH THING IS, counted left to right and top to bottom:
-        // 0-4 across the top row, 5-9 across the second.
+        // ART THAT IS NOT 48px SQUARE, and has no business being squeezed into
+        // the grid — a standalone texture in graphics/ui/, by name. Loaded from
+        // this table, so an entry here is all a new one needs.
         //
-        // Crops and animals share one table because they share one roster — a
-        // slot does not care which kind of thing filled it.
+        // The sheets are searched FIRST, so moving an icon into a sheet is a
+        // matter of adding its name there; an entry left behind here is dead
+        // rather than conflicting.
         //
-        // Anything missing here falls back to the fruit cropped out of its crop
+        // Anything in neither falls back to the fruit cropped out of its crop
         // sheet, so an unlock with no icon yet still shows something.
-        // A NUMBER is a frame in the SHEETS grid; a STRING is a standalone
-        // texture, for art that is not 48px square and has no business being
-        // squeezed into the grid.
         ICONS: {
-            // Standalone icons in graphics/ui/, by texture name. Loaded from
-            // this table, so an entry here is all a new one needs.
-            churn: 'churn_icon',
-            corn:  'corn_icon',
-            'tomato': 0, 'potato':  1, 'egg-plant': 2, 'green-beans': 3, 'melon': 4,
-            'cow':    5, 'chicken': 6, 'bunny':     7, 'sheep':       8, 'goat':  9,
+            corn: 'corn_icon',
         },
         POP_MS:      420,    // the drop-in when a slot fills
 
@@ -946,7 +961,7 @@ var CONFIG = {
                     // the foot, the y it sorts on IS the ground it occupies, so
                     // a cow in front of the barn draws over it and one behind
                     // does not.
-                    barn:             { FILE: 'graphics/animals/cows/barn.webp', SIZE: 3.4, ORIGIN: [0.5, 1] },
+                    barn:             { FILE: 'graphics/animals/cow/barn.webp', SIZE: 3.4, ORIGIN: [0.5, 1] },
                     // The chicken block's building. Well under the barn on
                     // purpose: the size difference is most of what says one
                     // holds cattle and the other holds birds.
@@ -1482,8 +1497,8 @@ var CONFIG = {
                     // is spare and waiting for that.
                     pig: {
                         SHEETS: {
-                            ns: { FILE: 'graphics/animals/pigs/pig_ns.webp', FRAME_W: 77,  FRAME_H: 96 },
-                            e:  { FILE: 'graphics/animals/pigs/pig_e.webp',  FRAME_W: 128, FRAME_H: 82 },
+                            ns: { FILE: 'graphics/animals/pig/pig_ns.webp', FRAME_W: 77,  FRAME_H: 96 },
+                            e:  { FILE: 'graphics/animals/pig/pig_e.webp',  FRAME_W: 128, FRAME_H: 82 },
                         },
                         // pig_ns is two rows of three, counted left to right and
                         // top to bottom: north is 0-2, south is 3-5.
@@ -1586,11 +1601,11 @@ var CONFIG = {
                         // because a churn and an egg are nothing alike: one is
                         // nearly as tall as the cow that made it, the other sits
                         // under a hen. Only the TIMING is shared (PRODUCE above).
-                        PRODUCE: { NAME: 'churn', FILE: 'graphics/animals/cows/churn.png',
+                        PRODUCE: { NAME: 'churn', FILE: 'graphics/animals/cow/churn.png',
                                    ICON: 'churn_icon', SIZE: 0.93 },
                         SHEETS: {
-                            ns: { FILE: 'graphics/animals/cows/cow_ns.webp', FRAME_W: 57,  FRAME_H: 114 },
-                            e:  { FILE: 'graphics/animals/cows/cow_e.webp',  FRAME_W: 128, FRAME_H: 84  },
+                            ns: { FILE: 'graphics/animals/cow/cow_ns.webp', FRAME_W: 57,  FRAME_H: 114 },
+                            e:  { FILE: 'graphics/animals/cow/cow_e.webp',  FRAME_W: 128, FRAME_H: 84  },
                         },
                         // Two rows of three: north is 0-2, south is 3-5, each
                         // running idle, walk, eat. The side view is 84px where
@@ -1761,6 +1776,19 @@ var CONFIG = {
                     MAX_HOLD_MS: 5000,
                     REACH:    1.15,   // tiles — what comes off in passing
                     SPEED_MUL: 2.4,   // faster than his wander; he has a job on
+                    // ONCE THE FIELD CANNOT GET ANY RIPER, he stops pacing
+                    // himself. When the canal is cut through, the water has
+                    // finished spreading and every plant is grown, picking is
+                    // the only thing left between here and the next level — and
+                    // unlike the dig and the flood, it is not something the
+                    // player is watching happen, it is something they are
+                    // waiting out.
+                    //
+                    // His WALK only. The pick, the fruit's rise and its flight
+                    // to the tally keep their own timing: those are the beats
+                    // that read as the reward, and speeding them up would take
+                    // the payoff away rather than shorten the wait.
+                    RUSH_MUL: 2,
                     // A crossing that has not finished in this long is not
                     // going to. He gives up on the deck and jumps, because the
                     // roster waits on the field being picked and a farmer stuck
@@ -2164,18 +2192,28 @@ var CONFIG = {
                                               // it reads as a wash and not a swap
 
                     // ── HOW FAR THE DAMP REACHES ────────────────────────
-                    // Water spreads a little way out of a ditch and a little way
-                    // around a watered plant. It does not soak a whole field, and
-                    // a field that turns wholesale says nothing about where the
-                    // water went — the far corners change colour on the same
-                    // beat as the bank, so the colour stops meaning "the water
-                    // reached here" and starts meaning "the level is done".
+                    // The whole field — but never all at once, and that
+                    // distinction is the whole of it.
+                    //
+                    // A field that turns wholesale says nothing about where the
+                    // water went: the far corners change colour on the same beat
+                    // as the bank, and the colour stops meaning "the water
+                    // reached here" and starts meaning "the level is done". So
+                    // the damp SPREADS. Every tile takes the canal cell nearest
+                    // it and waits SPREAD_MS for each tile of ground between
+                    // them, and the wash rolls out of each ditch as that ditch
+                    // fills — the far corner is still dry while the bank turns,
+                    // and arrives in its own time.
                     //
                     // Rings are in TILES, measured as a square ring (diagonals
                     // included, so a corner does not stay dry between two damp
-                    // neighbours). Everything outside both stays dry ground.
+                    // neighbours). Inside a ring there is no spread delay: the
+                    // bank and the ground a plant is watered on turn with the
+                    // water itself, because they ARE where the water got to.
                     CANAL_RING: 1,            // banks: the ditch's own margin
                     CROP_RING:  1,            // the ground each plant is watered on
+                    WHOLE_FIELD: true,        // past the rings, keep going
+                    SPREAD_MS:   110,         // per tile of ground from the ditch
                 },
             },
 
@@ -2372,7 +2410,11 @@ var CONFIG = {
             // crop LIBRARY in levels.js. A dictionary, not a running order.
             CROP_DIR:   LEVEL_DATA.CROP_LIBRARY.DIR,
             CROP_EXT:   LEVEL_DATA.CROP_LIBRARY.EXT,
-            CROP_CLASS: LEVEL_DATA.CROP_LIBRARY.CLASS,
+            CROP_CLASS:  LEVEL_DATA.CROP_LIBRARY.CLASS,
+            // What each class changes — size, tilled patch, sway, stage spread.
+            // Asked for by trait, never by class name, so a new class is data.
+            CROP_TRAITS: LEVEL_DATA.CROP_LIBRARY.CLASS_TRAITS,
+            CROP_SCALE:  LEVEL_DATA.CROP_LIBRARY.SCALE,
             // Where the extra pieces sit against the plant's own depth. The
             // support must be behind it and the fruit in front, and both are
             // hairline offsets so nothing else in the depth band is disturbed.
@@ -2389,6 +2431,8 @@ var CONFIG = {
             // nothing softens. The stem is anchored at the plant's base, so the
             // extra size grows UP and OUT from where it is rooted rather than
             // moving the plant.
+            // Vegetables only. A crop of CLASS 'tree' ignores this and stands
+            // the same size at every stage.
             CROP_STAGE_SCALE: [1, 1, 1, 1.3, 1.3],
             CROP_STAGES:  5,
             CROP_GROW_MS: 1000,     // time between growth stages
@@ -2483,6 +2527,22 @@ var CONFIG = {
                 HZ:        2.2,     // wobbles per second
                 DAMP:      0.32,    // 0 = rings forever, 1 = no overshoot
                 MIN_STAGE: 2,       // never a seed — it is a dot on the soil
+
+                // HOW a crop shakes is its class's business — a stem BENDS, a
+                // tree SQUASHES (see CLASS_TRAITS in levels.js). Both ride the
+                // same spring, so HZ and DAMP still decide how it rings; these
+                // two only give the squash its shape.
+                //
+                // WHY A TREE DOES NOT BEND. Bending rotates the sprite about the
+                // stem origin, and the art's shadow lies BELOW that origin and
+                // spreads wide — so a small angle swings the shadow's far edge a
+                // long way and the tree reads as lifting off the ground. Scaling
+                // about the same point barely moves it: the shadow sits close to
+                // the origin, while the canopy is the whole frame away from it
+                // and does all the moving. It is also the truer motion — a
+                // picked tree shakes its canopy, it does not tip over.
+                SQUASH_PCT:  9,     // peak shortening, as a % of the plant's height
+                SQUASH_WIDE: 0.55,  // how much of that goes sideways. 0 = pure squash
             },
             // Where the plant's STEM meets the ground, as a fraction of the
             // frame height. Not 1: the art carries a blurred elliptical shadow

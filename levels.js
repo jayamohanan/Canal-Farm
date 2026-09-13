@@ -79,28 +79,32 @@ const LEVEL_DATA = {
         // the ones before it grew, plus its own. The last one named is the new
         // one, and the one that reaches the roster.
 
-        { FILE: 'maps/levels/level_01.tmj', CROPS: { 1: 'tomato' } },
-        { FILE: 'maps/levels/level_13.tmj', CROPS: { 1: 'potato' }, RANCH: { SPECIES: 'pig', COUNT:30} },
+        { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
 
-        { FILE: 'maps/levels/level_12.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
-        { FILE: 'maps/levels/level_11.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'cow',} },
+        //livestock levels
+        { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
+        { FILE: 'maps/levels/livestock/livestock_cow.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'cow',} },
+        { FILE: 'maps/levels/livestock/livestock_pig.tmj', CROPS: { 1: 'potato' }, RANCH: { SPECIES: 'pig', COUNT:30} },
+
+        //orchard levels
+        { FILE: 'maps/levels/orchard/orchard_01.tmj', CROPS: { 1: 'mango' } },
+        { FILE: 'maps/levels/orchard/orchard_02.tmj', CROPS: { 1: 'mango', 2:"cherry" } },
+        { FILE: 'maps/levels/orchard/orchard_03.tmj', CROPS: { 1: 'mango', 2:"cherry", 3:"banana" } },
+        { FILE: 'maps/levels/orchard/orchard_04.tmj', CROPS: { 1: 'mango', 2:"cherry", 3:"banana", 4:"orange" } },
+        { FILE: 'maps/levels/orchard/orchard_05.tmj', CROPS: { 1: 'mango', 2:"cherry", 3:"banana", 4:"orange", 5:"pomegranate" } },
+
+
+        { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
+        { FILE: 'maps/levels/livestock/livestock_cow.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'cow',} },
         
-
-        { FILE: 'maps/levels/level_02.tmj', CROPS: { 1: 'tomato', 2: 'potato' } },
-        { FILE: 'maps/levels/level_03.tmj', CROPS: {  1: 'tomato', 2: 'potato', 3: 'egg-plant' }},
-        { FILE: 'maps/levels/level_04.tmj', CROPS:  {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans' } },
-        { FILE: 'maps/levels/level_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
-
-
-
-        
+        //vegetable levels
+        { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
+        { FILE: 'maps/levels/vegetable/vegetable_02.tmj', CROPS: { 1: 'tomato', 2: 'potato' } },
+        { FILE: 'maps/levels/vegetable/vegetable_03.tmj', CROPS: {  1: 'tomato', 2: 'potato', 3: 'egg-plant' }},
+        { FILE: 'maps/levels/vegetable/vegetable_04.tmj', CROPS:  {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans' } },
+        { FILE: 'maps/levels/vegetable/vegetable_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
 
 
-        { FILE: 'maps/levels/level_11.tmj', CROP: 'corn', RANCH: { SPECIES: 'cow',} },
-        { FILE: 'maps/levels/level_10.tmj', CROP: 'corn', RANCH: { SPECIES: 'pig', COUNT: 8 } },
-        { FILE: 'maps/levels/level_08.tmj', CROP: 'corn' },
-        { FILE: 'maps/levels/level_07.tmj', CROP: 'tomato' },
-        { FILE: 'maps/levels/level_06.tmj', CROP: 'carrot' },
         
         // An animal farm — nothing to draw on the map, just:
         //   { FILE: '…', CROP: 'grass', RANCH: { SPECIES: 'cow', COUNT: 8 } },
@@ -135,6 +139,85 @@ const LEVEL_DATA = {
             'grass2':      'pasture',
             'grass3':      'pasture',
             'grass4':      'pasture',
+
+            // Orchard. A tree's SHEET is laid out like any other fruiting crop —
+            // four bodies and a fruit — so the class changes nothing about how
+            // the frames are read. What it carries is everything a tree does
+            // DIFFERENTLY from a plant: no tilled patch under it, no stage
+            // spread at maturity, and no sway when someone walks past. See
+            // _cropLayout in game.js for the frame side, and SCALE below for
+            // how big each one draws.
+            'mango':       'tree',
+            'cherry':      'tree',
+            'banana':      'tree',
+            'orange':      'tree',
+            'pomegranate': 'tree',
+        },
+
+        // ── WHAT A CLASS DOES ───────────────────────────────────────────────
+        // Everything a class changes about a crop, declared once. Nothing in
+        // the game asks "is this a tree" — it asks what the crop's class says
+        // about the one trait it cares about, and a class that says nothing
+        // gets the default in the asking code.
+        //
+        // THIS IS WHAT MAKES A NEW CROP ONE LINE. Adding a peach means naming
+        // its class above and nothing else: it picks up the size, the bare
+        // ground and the stillness from here, because those belong to trees
+        // rather than to any particular tree.
+        //
+        //   TILLED        a worked-soil patch under the plant. Off for turf,
+        //                 which is not worked ground, and for trees, which are
+        //                 perennial — and whose canopy hides the patch anyway.
+        //   SWAY          rocks when the farmer brushes past. A stem bends; a
+        //                 trunk does not. Trees still shake when picked — that
+        //                 is a separate force and asks for it explicitly.
+        //   STAGE_SPREAD  widens at maturity (CROP_STAGE_SCALE). It exists so a
+        //                 mature vegetable can spill past its own cell. A tree
+        //                 is already several tiles wide, and spreading it
+        //                 further mostly swells the fruit, which reads as the
+        //                 camera moving in.
+        //   SHAKE         what the pick's shake looks like: 'bend' rotates the
+        //                 plant about its stem, 'squash' compresses it in place.
+        //                 A tree squashes because its shadow sits under the
+        //                 pivot and is wide, so rotating swings the shadow.
+        //   SCATTER       planted off the cell centre, and sometimes twice, so
+        //                 the field has no rows. Right for turf, which nobody
+        //                 sowed in lines; wrong for anything someone planted.
+        //   SCALE         drawn size in tiles-per-frame-width. The per-crop
+        //                 SCALE table below overrides it for one odd variety.
+        CLASS_TRAITS: {
+            pasture: { TILLED: false, SCATTER: true },
+            tree:    { TILLED: false, SWAY: false, STAGE_SPREAD: false, SCALE: 2.0,
+                       SHAKE: 'squash' },
+        },
+
+        // ── HOW BIG IT GROWS ────────────────────────────────────────────────
+        // A multiplier on the plant's drawn size. 1 — the default — makes a
+        // crop exactly one tile wide before the growth stages scale it.
+        //
+        // WHY TREES NEED IT. A crop sheet's frame WIDTH is mapped to one tile
+        // whatever its pixel size, so every crop ends up the same size on screen
+        // and drawing a tree bigger inside its frame changes nothing. With the
+        // farmer a fixed 1.9 tiles on every farm, an orchard came out the same
+        // height as a tomato patch and read as a field of bushes.
+        //
+        // 2.0 IS THE CEILING FOR THE EXISTING ART, and it is not arbitrary: the
+        // growth stages multiply this by 1.3 at maturity, so 2.0 draws a
+        // 128x256 frame at exactly 128x256 — its native pixels, nothing
+        // stretched. Anything above starts upscaling and the tree goes soft.
+        //
+        // At that size the frame stands 5.2 tiles tall against a 1.9-tile
+        // farmer, so how tall the TREE looks is down to how much of the frame
+        // the drawing fills. Fill the frame and it reads at roughly twice his
+        // height, which is what an orchard wants.
+        //
+        // For anything bigger the frames have to be re-exported at 256 wide;
+        // then a scale of 3 draws at 186px from 256 and is still downsampled.
+        // PER-CROP OVERRIDES ONLY. A class already carries the size its crops
+        // normally draw at — trees take 2.0 from CLASS_TRAITS — so this table
+        // is for the one variety that breaks its class's rule, a dwarf apple
+        // among standards. Empty is the healthy state.
+        SCALE: {
         },
     },
 
