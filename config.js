@@ -630,6 +630,11 @@ var CONFIG = {
         // machine is actually being fed, which is the number that decides how
         // fast the ground gives way.
         TOTAL_CHARGE: {
+                // DRAWN ON THE OVERLAY CAMERA, above the farm. This number can
+                // reach nine digits and outgrow the panel it sits in; without
+                // this it slides under the field at the boundary and the tail
+                // of it is simply lost. Set false to let it fall behind again.
+                ON_TOP: true,
             ENABLED: true,
             GAP:     6,         // out from the case's terminal (px @ design).
                                 // Measured from the CAP, not the case, so the
@@ -1502,6 +1507,33 @@ var CONFIG = {
                 // as the crops' watering stagger.
                 STAGGER_MS: [0, 1600],
 
+                // WHERE RABBITS COME FROM. Points named NAME on the LAYER object
+                // layer; each one draws a burrow and the warren is however many
+                // the map puts down.
+                //
+                // Drawn on the animals' own beat, not the level's: a burrow
+                // watches its nearest canal cell and pops in behind the water
+                // exactly as the animals do, so the ground does not arrive
+                // furnished ahead of what lives on it.
+                //
+                // Nothing is tied to rabbits here — a map that drops these
+                // points gets burrows, whatever it is farming.
+                BURROW: {
+                    ENABLED: true,
+                    LAYER:   'burrow',
+                    NAME:    'burrow',
+                    FILE:    'graphics/animals/bunny/burrow.png',
+                    SIZE:    0.9,       // tiles tall; width follows the art
+                    // A HOLE IN THE GROUND, so it sits in the ground band and
+                    // not among the actors: a flat mark on the earth that
+                    // everything alive walks over, whichever side it approaches
+                    // from. Sorting it by its own Y would hide a rabbit standing
+                    // just north of its own burrow behind it.
+                    //
+                    // Above the mud (1.45), below the dry branch ditches (1.5).
+                    DEPTH:   1.46,
+                },
+
                 // A SPECIES gathers everything one animal needs: a drawing per
                 // facing, its second drawing for grazing, and how tall it stands
                 // in TILES. Adding pigs is a block like this one plus a line in
@@ -1962,6 +1994,66 @@ var CONFIG = {
                 // until the actor band moved from 3 to 4 to lift animals over
                 // the main canal. Crops have been drawn across it since.
                 DEPTH:   4.6,
+
+                // ── THE RIG'S OWN CHARGE BADGE ──────────────────────────────
+                // A miniature of the battery case from the panel, riding under
+                // the machine: the same rounded housing and terminal, holding
+                // the bolt and the TOTAL charge the three slots are supplying.
+                //
+                // Without the dividers. At this size three divisions would be
+                // three hairlines a few pixels apart — noise, not information —
+                // and the badge is showing one number, not three.
+                //
+                // It answers a question the panel cannot: the panel is off at
+                // the edge of the screen, while the eye is on the cut line. This
+                // puts what the machine is being fed where the work is.
+                BADGE: {
+                    ENABLED: true,
+                    // A TRUE MINIATURE. Every dimension — the housing, its
+                    // corners, the terminal, the stroke — is the panel's own
+                    // battery case multiplied by SCALE. Nothing is restated
+                    // here, because that case is worked out from the slot
+                    // layout and changes shape between portrait and landscape;
+                    // a badge holding its own copy of the numbers would match
+                    // in one and be wrong in the other.
+                    SCALE:    0.15,     // of the panel's case, on screen
+                    // NORTH OF THE RIG, and fully clear of it: measured from the
+                    // northern edge of the machine's art, whichever piece owns
+                    // it. Y is the GAP past that edge — not an offset to the
+                    // badge's centre — so it never overlaps the sprite at any
+                    // tile size.
+                    X:        0,        // from the rig's centre, in rig widths
+                    Y:        0.25,     // gap past the rig's north edge, in tiles
+                    // ABOVE THE WATER, not under the machine. Trailing the rig
+                    // puts it over the trench that has just been cut, and the
+                    // main canal's water sits at 3.10 — a badge tucked under the
+                    // belt at 3.04 would be fine until the flood caught up and
+                    // then quietly drown. It is a readout, so it goes where the
+                    // work figure goes, a hair below it.
+                    DEPTH:    4.58,
+                    PAD_X:    0.16,     // housing wall to contents, in case heights
+                    GAP:      0.10,     // bolt to number, in case heights
+                    // THE TEXT SCALES WITH THE BOX, as everything else does.
+                    // Given as a fraction of the housing height rather than a
+                    // point size: a fixed size would hold its own while the
+                    // case shrank around it, which is exactly what stopped the
+                    // badge reading as a miniature — it looked like the panel's
+                    // case with the label still full size inside it.
+                    TEXT_FRAC:   0.52,  // of the housing height
+                    STROKE_FRAC: 0.07,  // outline, likewise
+                    COLOR:    '#ffffff',
+                    STROKE:   '#1d2b16',
+                    BOLT_H:   0.62,     // bolt height, as a fraction of the case
+                    BOLT_TINT: 0xffffff,
+                    // AN OUTLINE, exactly as the panel's case is — no wash
+                    // inside it. And drawn in that case's own colour rather
+                    // than a copy of it: leave LINE_COLOR out and the two stay
+                    // the same object if either is ever restyled.
+                    FILL_ALPHA: 0,
+                    STROKE_MUL: 1.5,    // the one dimension not scaled faithfully:
+                                        // a true miniature's outline lands near a
+                                        // single pixel and stops reading as an edge
+                },
 
                 // ONLY ON THE LIT FARM. The rig no longer waits for a field to
                 // come in, so it spends most of its time cutting the level
@@ -3115,10 +3207,48 @@ var CONFIG = {
                                         // reached 223 t/s), so it sits well above
                                         // what power normally buys and almost
                                         // never binds
-                BELT_CYCLES:     10,    // the belt runs at this, cycles/sec, and
-                                        // nothing changes it. Ten cycles of five
-                                        // frames is 50fps — the rate the art was
-                                        // calibrated at.
+                // ── WHAT THE BELT SAYS ABOUT POWER ──────────────────────
+                // Travel speed already tells the player how hard the GROUND is.
+                // This tells them how strong the MACHINE is, which travel cannot
+                // — a powerful rig in hard soil and a weak one in soft soil move
+                // at the same pace and used to look identical.
+                //
+                // TWO DIALS, because one cannot cover the range. Charge climbs
+                // by half again every battery level, so any single visual runs
+                // out long before the levels do:
+                //
+                //   CYCLES  how fast the loop plays, cycles/sec. Capped by the
+                //           SCREEN, not by taste — five frames at 12 cycles is
+                //           60fps, one art frame per refresh, and past that
+                //           frames are dropped and the tread can appear to run
+                //           backwards. 15 is deliberately over that: it is only
+                //           reached at the very top, where the belt is meant to
+                //           read as a blur rather than as a legible loop.
+                //   DUTY    the fraction of each PERIOD_MS the belt runs at all.
+                //           Below 1 it moves in bursts, which is what makes a
+                //           weak machine look like it is labouring. At 1 it is
+                //           continuous and the pauses are gone.
+                //
+                // CURVE is 'log' because CHARGE is exponential. Interpolated
+                // straight, the first dozen battery levels would share the
+                // bottom tenth of the range and be indistinguishable; on a log
+                // curve every level is about the same visual step, which is the
+                // whole point. Set 'linear' to spread by raw charge instead.
+                BELT: {
+                    CHARGE:    [5, 7000],   // the power range the look spreads over
+                    CYCLES:    [7, 15],     // cycles/sec at those two ends
+                    DUTY:      [0.4, 1],    // running fraction at those two ends
+                    PERIOD_MS: 1000,        // one burst-and-rest cycle
+                    CURVE:     'log',
+                    // The RIG lunges and rests with its belt, instead of
+                    // gliding on while the tread stops. Speed is raised by
+                    // 1/DUTY during the burst, so the tiles cut per second —
+                    // and the charge they cost — do not change at all.
+                    MOVE_WITH_DUTY: true,
+                },
+                BELT_CYCLES:     10,    // fallback rate if BELT above is removed.
+                                        // Ten cycles of five frames is 50fps —
+                                        // the rate the art was calibrated at.
                                         //
                                         // Deliberately CONSTANT. Ground hardness
                                         // is told entirely through how fast the

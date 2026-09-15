@@ -72,21 +72,9 @@ const LEVEL_DATA = {
     // Adding a level: one line. Reordering: move the line, and its crop travels
     // with it.
     LEVELS: [
-
-
-
         // Levels 1-3 paint markers 1, 1-2 and 1-2-3 — each field carries what
         // the ones before it grew, plus its own. The last one named is the new
         // one, and the one that reaches the roster.
-
-
-        { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
-        { FILE: 'maps/levels/livestock/livestock_bunny.tmj', CROPS: { 1: 'carrot' }, RANCH: { SPECIES: 'bunny', COUNT:40} },
-
-                { FILE: 'maps/levels/vegetable/vegetable_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
-
-        { FILE: 'maps/levels/livestock/livestock_sheep.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'sheep', COUNT:60} },
-
 
         //vegetable levels
         { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
@@ -106,14 +94,6 @@ const LEVEL_DATA = {
         { FILE: 'maps/levels/orchard/orchard_03.tmj', CROPS: { 1: 'mango', 2:"cherry", 3:"banana" } },
         { FILE: 'maps/levels/orchard/orchard_04.tmj', CROPS: { 1: 'mango', 2:"cherry", 3:"banana", 4:"orange" } },
         { FILE: 'maps/levels/orchard/orchard_05.tmj', CROPS: { 1: 'mango', 2:"cherry", 3:"banana", 4:"orange", 5:"pomegranate" } },
-
-
-        { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
-        { FILE: 'maps/levels/livestock/livestock_cow.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'cow',} },
-        
-        
-
-
         
         // An animal farm — nothing to draw on the map, just:
         //   { FILE: '…', CROP: 'grass', RANCH: { SPECIES: 'cow', COUNT: 8 } },

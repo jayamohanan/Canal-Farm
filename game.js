@@ -832,6 +832,21 @@ console.log(
             const h    = (slotYs[2] + ssz / 2 + casePad) - top;
             const thin = vert ? w : h;          // the case's SHORT dimension
             const col  = hexColor(CS.COLOR || '#364549');
+            // ITS PROPORTIONS, kept for the rig's miniature of it. Recorded
+            // rather than restated: this shape is worked out from the slot
+            // layout and changes with the orientation, so a badge carrying its
+            // own copy of the numbers would match in portrait and be wrong in
+            // landscape.
+            this.caseGeom = {
+                w, h, color: col,
+                radius:  sp(CS.RADIUS || 14),
+                stroke:  sp(CS.STROKE || 4),
+                nodeL:   sp(CS.NODE_W || 14),
+                nodeC:   thin * (CS.NODE_H !== undefined ? CS.NODE_H : 0.38),
+                nodeGap: sp(CS.NODE_GAP || 0),
+                nodeR:   sp(CS.NODE_RADIUS || 5),
+                vert,
+            };
             const g    = this.add.graphics().setDepth(2.8);
 
             g.fillStyle(hexColor(CS.FILL_COLOR || '#c2d1e0'),
@@ -1178,6 +1193,7 @@ console.log(
         this._worldBSet = new Set();
         this._camBSnapDone = false;   // fresh build (incl. scene.restart on resize) → the set must refill
         this.camB = null;
+        this.camTop = null;           // rebuilt with everything else on a restart
         if (RC.ENDLESS && RC.ENDLESS.ENABLED) {
             this.endless = {
                 segIndex: 0,
@@ -1681,6 +1697,157 @@ console.log(
             `scroll=(${this.camB.scrollX},${this.camB.scrollY})`);
         this._camBSnapDone = true;
         this._worldBSet.clear();
+        this._buildTopLayer();
+    }
+
+    // THE OVERLAY. A third camera, added last so it draws AFTER the farm.
+    //
+    // The two-camera split cannot solve this on its own. Camera order is list
+    // order, and the farm camera is added second, so anything the main camera
+    // draws is covered wherever the two overlap — which is why a charge readout
+    // that outgrows the panel disappears under the field instead of sitting over
+    // it. Putting the main camera last instead is not an option: it also draws
+    // the full-screen background gradient, which would then cover the farm
+    // entirely.
+    //
+    // So: a camera whose whole job is "above everything", which draws NOTHING
+    // unless an object is handed to it. Opt-in, because the default has to be
+    // safe — a layer that drew by default would put the background on top the
+    // moment anything new was added.
+    _buildTopLayer() {
+        this.camTop = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+        this.camTop.ignore(this.children.list);
+        // Anything born later is ignored too, so the layer stays empty unless
+        // something is explicitly promoted into it.
+        if (this._topHook) this.events.off('addedtoscene', this._topHook);
+        this._topHook = (o) => { if (this.camTop) this.camTop.ignore(o); };
+        this.events.on('addedtoscene', this._topHook);
+
+        // WHAT RIDES ON TOP. The charge total is the one readout that can
+        // outgrow its panel — the numbers reach nine digits — so it is the one
+        // thing that must never be behind the field. Its bolt goes with it or
+        // the two would separate at the boundary.
+        const P = CONFIG.PLATFORM || {};
+        if (P.TOTAL_CHARGE && P.TOTAL_CHARGE.ON_TOP !== false) {
+            this._addTop(this.totalChargeText);
+            this._addTop(this.totalChargeBolt);
+        }
+    }
+
+    // THE CHARGE BADGE — the panel's battery case in miniature, under the rig.
+    //
+    // Its shape is that case's, scaled: one multiplier carries the housing, the
+    // corner radius, the terminal and the stroke together, so the two cannot
+    // drift apart and neither orientation has to be special-cased.
+    //
+    // THE HOUSING IS A FIXED SHAPE, which is the whole point of matching — so
+    // when the total outgrows it, the NUMBER gives way rather than the box. It
+    // is already abbreviated by the time it arrives here, so that is rare.
+    //
+    // Only redrawn when the size actually changes. Re-stroking two rounded
+    // rectangles every frame is real work for a shape identical to last
+    // frame's; position is what moves, and that is set every frame.
+    _placeBadge(tn, b, faceY, gTile) {
+        const BG = (CONFIG.ROAD.TILEMAP.POWER_LABEL || {}).BADGE || {};
+        const bd = tn.badge, G = this.caseGeom;
+        if (!bd || !bd.box || !bd.box.scene || !G) return;
+        const k = (BG.SCALE !== undefined ? BG.SCALE : 0.5);
+        const w = G.w * k, h = G.h * k;
+        const padX = (BG.PAD_X !== undefined ? BG.PAD_X : 0.16) * h;
+        const gap  = (BG.GAP !== undefined ? BG.GAP : 0.10) * h;
+
+        bd.txt.setScale(1).setText(this._bigNum(this._slotPower()));
+        // THE WHOLE THING IS ONE SCALE. Font and outline come off the housing
+        // height, so shrinking SCALE shrinks the badge the way reducing a
+        // texture would — rather than shrinking the box around a label that
+        // stayed the size it was, which is what made it read as full size.
+        // Set only when the size changes; restyling text is not free.
+        if (bd.h !== h) {
+            bd.h = h;
+            bd.txt.setFontSize(Math.max(6,
+                Math.round(h * (BG.TEXT_FRAC !== undefined ? BG.TEXT_FRAC : 0.52))));
+            bd.txt.setStroke(BG.STROKE || '#1d2b16',
+                Math.max(1, Math.round(h * (BG.STROKE_FRAC !== undefined
+                                          ? BG.STROKE_FRAC : 0.07))));
+        }
+        let boltW = 0;
+        if (bd.bolt) {
+            bd.bolt.displayHeight = h * (BG.BOLT_H !== undefined ? BG.BOLT_H : 0.62);
+            bd.bolt.displayWidth  = bd.bolt.displayHeight *
+                (bd.bolt.frame.width / bd.bolt.frame.height);
+            boltW = bd.bolt.displayWidth + gap;
+        }
+        // What is left for the number once the walls and the bolt have taken
+        // theirs. Shrunk to fit rather than clipped: a total that runs past the
+        // housing would look broken, where a smaller one just looks smaller.
+        const avail = Math.max(1, w - padX * 2 - boltW);
+        if (bd.txt.width > avail) bd.txt.setScale(avail / bd.txt.width);
+
+        // CLEAR OF THE WHOLE RIG, off its NORTHERN edge.
+        //
+        // Which piece owns that edge is not assumed. Asking both sprites and
+        // keeping whichever reaches furthest north survives them being
+        // rearranged — and guards against the mistake this made twice, of
+        // picking one piece and landing on the seam between the two.
+        //
+        // Measured from the sprites rather than from config: the rig is sized
+        // against the tile, so a number written here would be right at one tile
+        // size and wrong at every other.
+        let head = Infinity;
+        for (const o of [b.belt, b.ctrl]) {
+            if (o) head = Math.min(head, o.y - o.displayHeight / 2);
+        }
+        if (!isFinite(head)) head = faceY;
+        const cx = b.x + (BG.X || 0) * b.rigW;
+        // Y is the GAP between the rig and the badge, so the badge's own height
+        // comes off as well — placing its centre at the gap would sink half of
+        // it back into the machine.
+        const y  = head - (BG.Y !== undefined ? BG.Y : 0.25) * gTile - h / 2;
+        const left = cx - w / 2, top = y - h / 2;
+
+        if (bd.w !== w) {
+            bd.w = w;
+            const g = bd.box;
+            g.clear();
+            g.fillStyle(BG.FILL_COLOR !== undefined ? BG.FILL_COLOR : 0x1d2b16,
+                        BG.FILL_ALPHA !== undefined ? BG.FILL_ALPHA : 0.55);
+            g.fillRoundedRect(0, 0, w, h, G.radius * k);
+            // The case's OWN colour unless overridden, so the miniature and the
+            // panel stay the same object when either is restyled.
+            const line = BG.LINE_COLOR !== undefined ? BG.LINE_COLOR : G.color;
+            // Heavier than a true miniature would be. Scaled down faithfully the
+            // outline lands near a single pixel, which is where a line stops
+            // reading as a drawn edge and starts looking like an artefact — so
+            // this one dimension is allowed to break proportion.
+            g.lineStyle(Math.max(1, G.stroke * k *
+                (BG.STROKE_MUL !== undefined ? BG.STROKE_MUL : 1)), line, 1);
+            g.strokeRoundedRect(0, 0, w, h, G.radius * k);
+            // The terminal off the far end — the one detail that makes a
+            // rounded box read as a battery rather than as a label. No
+            // dividers: at this size three hairlines a few pixels apart are
+            // noise, and this badge is showing one number, not three.
+            g.fillStyle(line, 1);
+            g.fillRoundedRect(w + G.nodeGap * k, h / 2 - (G.nodeC * k) / 2,
+                              G.nodeL * k, G.nodeC * k, G.nodeR * k);
+        }
+        bd.box.setPosition(left, top);
+        // The contents CENTRED in the housing, not packed against its left wall:
+        // the box no longer grows with them, so short totals would otherwise sit
+        // off to one side of a box sized for long ones.
+        let cur = left + (w - (boltW + bd.txt.width * bd.txt.scaleX)) / 2;
+        if (bd.bolt) { bd.bolt.setPosition(cur, y); cur += bd.bolt.displayWidth + gap; }
+        bd.txt.setPosition(cur, y);
+    }
+
+    // Promote one object into the overlay: drawn by camTop alone, so it lands
+    // above the farm however far it spills across the boundary. Cleared from the
+    // other two cameras, or it would be drawn twice.
+    _addTop(obj) {
+        if (!obj || !this.camTop) return obj;
+        obj.cameraFilter &= ~this.camTop.id;
+        this.cameras.main.ignore(obj);
+        if (this.camB) this.camB.ignore(obj);
+        return obj;
     }
 
     // One landscape SEGMENT: the band [bandTop, bandBot] gets its green land
@@ -7563,6 +7730,37 @@ console.log(
             // ...and it knows it is dark, so the first lit-check does not tween
             // from nothing to nothing.
             this.tunnel.labelLit = PL.ONLY_WHEN_LIT === false;
+
+            // THE BADGE under it: the panel's battery case in miniature, with
+            // what the slots are supplying. Three pieces rather than one, so the
+            // housing can be redrawn as the number changes width without
+            // touching the text or the bolt.
+            const BG = PL.BADGE || {};
+            if (BG.ENABLED !== false) {
+                const tn = this.tunnel;
+                tn.badge = {
+                    box: this._addB(this.add.graphics()
+                        .setDepth(BG.DEPTH !== undefined ? BG.DEPTH : 3.04), seg),
+                    // Size and outline are set on the first layout, off the
+                    // housing height — which is not known yet, because the
+                    // panel's case may not have been built.
+                    txt: this._addB(this.add.text(x, entryY, '', {
+                        fontFamily: CONFIG.FONT_FAMILY,
+                        color: BG.COLOR || '#ffffff', fontStyle: CONFIG.FONT_WEIGHT,
+                    }).setOrigin(0, 0.5)
+                      .setDepth((BG.DEPTH !== undefined ? BG.DEPTH : 3.04) + 0.002), seg),
+                    bolt: this.textures.exists('bolt')
+                        ? this._addB(this.add.image(x, entryY, 'bolt')
+                            .setOrigin(0, 0.5)
+                            .setTint(BG.BOLT_TINT !== undefined ? BG.BOLT_TINT : 0xffffff)
+                            .setDepth((BG.DEPTH !== undefined ? BG.DEPTH : 3.04) + 0.002), seg)
+                        : null,
+                    w: -1, h: -1,
+                };
+                tn.badge.box.setAlpha(0);
+                tn.badge.txt.setAlpha(0);
+                if (tn.badge.bolt) tn.badge.bolt.setAlpha(0);
+            }
         }
         // Built after the object exists: a dam is positioned against the dig's
         // own length and its flood grid, both of which are on the tunnel.
@@ -7816,7 +8014,16 @@ console.log(
             const cyc = Math.max(0, tn.beltRate || 0);                 // cycles/sec
             const fps = cyc * (TR.FRAMES || 5);
             b.belt.anims.timeScale = Math.max(0.02, fps / authored);
-            if (cutting && cyc > 0.01) { if (b.belt.anims.isPaused) b.belt.anims.resume(); }
+            // THE DUTY: below 1 the belt works in bursts, resting the rest of
+            // each period. That is what a weak machine looks like — it labours
+            // and catches up — and it is a second dial on top of the rate,
+            // which matters because the rate alone tops out at what the screen
+            // can draw long before the upgrades top out.
+            //
+            // Run off the same clock as the power surge, so the belt's burst
+            // lands with the machine's lunge rather than beating against it.
+            const on = tn.beltOn !== false;
+            if (cutting && cyc > 0.01 && on) { if (b.belt.anims.isPaused) b.belt.anims.resume(); }
             else if (!b.belt.anims.isPaused) b.belt.anims.pause();
         }
 
@@ -7967,6 +8174,41 @@ console.log(
     // What the slots are delivering, per second. This is POWER — it is not
     // converted to distance anywhere. How far that power moves the machine
     // depends on what it is cutting through, which is the whole point.
+    // WHERE THIS MACHINE SITS BETWEEN ITS WEAKEST AND STRONGEST LOOK, 0 to 1.
+    //
+    // On a LOG curve by default, because charge is exponential — half again per
+    // battery level. Spread linearly, levels 1 to 12 would all land in the first
+    // tenth and look the same as each other; spread logarithmically, each level
+    // is about an equal step, which is the only way 100 levels of upgrade stay
+    // legible in a belt.
+    // WHAT FRACTION OF A FRAME LANDED INSIDE THE BURST.
+    //
+    // The frame runs from `t` for `dt` around a period of `per`, and the burst
+    // is the first `duty` of every period. Wrapping is handled because a frame
+    // can straddle the end of one period and the start of the next — and at
+    // short periods can even span several, which the whole-period term covers.
+    _burstFrac(t, dt, per, duty) {
+        if (dt <= 0 || per <= 0) return 0;
+        const W = duty * per;                       // the burst's length
+        const whole = Math.floor(dt / per);         // complete periods crossed
+        let on = whole * W;
+        const rem = dt - whole * per;
+        const a = ((t - dt) % per + per) % per;     // where the frame began
+        const span = (x0, x1) => Math.max(0, Math.min(x1, W) - Math.min(x0, W));
+        if (a + rem <= per) on += span(a, a + rem);
+        else { on += span(a, per) + span(0, a + rem - per); }
+        return Math.max(0, Math.min(1, on / dt));
+    }
+
+    _beltMix(power) {
+        const B = (CONFIG.ROAD.TUNNEL.POWER || {}).BELT || {};
+        const [lo, hi] = B.CHARGE || [5, 7000];
+        if (!(hi > lo)) return 1;
+        const p = Math.max(lo, Math.min(hi, power));
+        if (B.CURVE === 'linear') return (p - lo) / (hi - lo);
+        return Math.log(p / lo) / Math.log(hi / lo);
+    }
+
     _slotPower() {
         let total = 0;
         for (let i = 0; i < 3; i++) {
@@ -8260,7 +8502,10 @@ console.log(
             // and that case has vTiles above zero and never reaches here.
             tn.strain   = 0;
             tn.beltRate = 0;
+            tn.beltDuty = 1;          // nothing is running; duty is meaningless
+            tn.beltOn   = false;
             tn.travel   = 0;
+            tn.travelMean = 0;
             this._setTrencherRunning(tn, false, false);
             this._runSpoil(tn.bore, tn.entryY - tn.progressPx, false, tn);
             this._shakeBore(tn, 0);
@@ -8278,9 +8523,74 @@ console.log(
         // through how fast the machine travels — hard ground and it creeps while
         // the belt keeps chewing at the same pace. Making the belt slow down too
         // said the same thing twice, and left neither reading clean.
-        const vNow  = vTiles * surge;
-        tn.travel   = vNow;                                      // tiles/sec
-        tn.beltRate = PW.BELT_CYCLES || 10;                      // cycles/sec
+        // THE BELT NOW SAYS HOW STRONG THE MACHINE IS. Travel already says how
+        // hard the ground is, and those are different questions — a strong rig
+        // in hard soil and a weak one in soft soil travel alike and used to look
+        // alike too. Both dials come off the charge loaded, not off the load.
+        const BL = PW.BELT;
+        tn.beltOn = true;
+        if (BL) {
+            const m  = this._beltMix(power);
+            const cy = BL.CYCLES || [5, 15], du = BL.DUTY || [0.4, 1];
+            tn.beltRate = cy[0] + (cy[1] - cy[0]) * m;            // cycles/sec
+            tn.beltDuty = du[0] + (du[1] - du[0]) * m;            // running fraction
+            // HOW MUCH OF THIS FRAME FELL INSIDE THE BURST — a fraction, not a
+            // yes or no.
+            //
+            // Testing "are we in the burst right now" once per frame does NOT
+            // average out to the duty: the frame boundaries do not line up with
+            // the burst edges, and the error is systematic rather than random.
+            // Sampled that way, a duty of 0.4 ran 4% long and shorter periods
+            // were out by 20% — which would have made every level finish sooner
+            // than it did before, exactly what this must not do.
+            //
+            // Integrating the burst across the frame instead is exact at any
+            // frame rate and any period.
+            //
+            // ON ITS OWN CLOCK, not the battery tick's: that one is reset every
+            // time a tick lands, and a phase that keeps jumping back to zero
+            // cannot be integrated honestly.
+            if (tn.beltDuty < 1) {
+                const per = Math.max(0.05, (BL.PERIOD_MS || 1000) / 1000);
+                tn.beltT  = ((tn.beltT || 0) + dt) % per;
+                tn.beltFrac = this._burstFrac(tn.beltT, dt, per, tn.beltDuty);
+                tn.beltOn = tn.beltFrac > 0;
+            } else {
+                tn.beltFrac = 1;
+            }
+        } else {
+            tn.beltRate = PW.BELT_CYCLES || 10;                   // cycles/sec
+            tn.beltDuty = 1;
+        }
+
+        // THE RIG MOVES WITH ITS BELT. A machine whose tread stops while the
+        // ground keeps opening in front of it is saying two things at once, and
+        // the player believes the ground.
+        //
+        // THE DISTANCE IS UNTOUCHED. Running only `duty` of the time at 1/duty
+        // the speed covers exactly the same tiles per second, so the economy,
+        // the level's length and the charge it costs are all as they were — only
+        // the delivery changes, from a glide into a lunge and a pause.
+        //
+        // The tick SURGE is dropped while this is on rather than multiplied
+        // through it. Both exist to redistribute speed inside the second, and
+        // the surge only averages out over a whole second — over the burst
+        // alone it does not, so stacking them would quietly change how far the
+        // machine got.
+        let gate = surge;
+        if (BL && BL.MOVE_WITH_DUTY !== false && tn.beltDuty < 1) {
+            // The frame's share of the burst, spread over the whole frame. Mean
+            // gate across a period is exactly 1, so the tiles cut per second are
+            // unchanged to the last decimal.
+            gate = tn.beltFrac / tn.beltDuty;
+        }
+        tn.travel = vTiles * gate;                               // tiles/sec
+        // WHAT IT AVERAGES, beside what it is doing this instant. The spoil
+        // reads this: how hard the machine is working is a steady fact about the
+        // power it has, and driving the spray off the gated speed instead would
+        // swing it between nothing and its ceiling every burst — while also
+        // rewriting both emitters' settings on every frame of the swing.
+        tn.travelMean = vTiles;
         // Strain is how hard this looks, and it drives the shake. Measured against
         // the pace a well-powered machine settles at — NOT against MAX_SPEED,
         // which sits far above normal play precisely so it never binds. Against
@@ -8302,7 +8612,7 @@ console.log(
                 `-> ${vTiles.toFixed(3)} t/s (${vEnergy < vFree ? 'POWER-bound' : 'BELT-bound'})  ` +
                 `belt ${tn.beltRate.toFixed(1)} cyc/s  strain ${tn.strain.toFixed(2)}`);
         }
-        const step  = Math.min(remaining, vNow * gTile * dt);
+        const step  = Math.min(remaining, tn.travel * gTile * dt);
         tn.progressPx += step;
         tn.wheelPx = (tn.wheelPx || 0) + step;
 
@@ -8345,7 +8655,12 @@ console.log(
             }
         }
         this._setTrencherRunning(tn, true, step > 0.01);
-        this._shakeBore(tn, tn.strain);
+        // THE RIG SHAKES ONLY WHILE IT IS CUTTING. Strain is worked out from the
+        // machine's average pace, so left alone it judders straight through the
+        // rest between bursts — a machine shuddering while its belt is stopped
+        // and nothing is coming off the face. The effort and the evidence of it
+        // have to start and stop together.
+        this._shakeBore(tn, tn.beltOn === false ? 0 : tn.strain);
         if (tn.workLabel) {
             // On the dig line, out past the rig's left flank. Anchored to the
             // machine's own x and width, so it clears the rig at any tile size.
@@ -8372,6 +8687,7 @@ console.log(
                 .setText(this._bigNum(shown))
                 .setPosition(b.x - b.rigW * (0.5 + (PL.X !== undefined ? PL.X : 0.4)),
                              faceY + (PL.Y || 0) * gTile);
+            this._placeBadge(tn, b, faceY, gTile);
             // SHOWN ONLY WHILE ITS OWN LEVEL IS LIT. Faded, not blinked, and on
             // the dim's timing so the number arrives with the light.
             //
@@ -8384,7 +8700,13 @@ console.log(
                 if (tn.labelLit !== lit) {
                     tn.labelLit = lit;
                     const D = CONFIG.ROAD.TILEMAP.DIM || {};
-                    this.tweens.add({ targets: tn.workLabel, alpha: lit ? 1 : 0,
+                    // The badge rides the same fade. It belongs to this rig's
+                    // readout, and one of the two lingering while the other went
+                    // dark would read as a bug rather than as a pair.
+                    const lot = [tn.workLabel];
+                    if (tn.badge) lot.push(tn.badge.box, tn.badge.txt,
+                                           ...(tn.badge.bolt ? [tn.badge.bolt] : []));
+                    this.tweens.add({ targets: lot, alpha: lit ? 1 : 0,
                         duration: D.FADE_MS !== undefined ? D.FADE_MS : 420,
                         ease: 'Sine.easeOut' });
                     // COMING INTO THE LIGHT: show the price, then spend it down.
@@ -8671,7 +8993,8 @@ console.log(
         // 0..1, how hard the machine is working. Read from TRAVEL, not from the
         // belt — the belt is a constant now, so it can no longer report anything.
         const easy = PW.EASY_SPEED || 1.2;
-        const work = tn ? Math.max(0, Math.min(1, (tn.travel || 0) / easy)) : 1;
+        const rate = tn ? (tn.travelMean !== undefined ? tn.travelMean : tn.travel) : 0;
+        const work = tn ? Math.max(0, Math.min(1, (rate || 0) / easy)) : 1;
         const floor = PW.SPOIL_MIN !== undefined ? PW.SPOIL_MIN : 0.25;
         const k = floor + (1 - floor) * work;
         if (tn && sp.k !== undefined && Math.abs(k - sp.k) < 0.02) {
@@ -8694,7 +9017,12 @@ console.log(
         sp.sprayR.setPosition(b.x + x, y);
         if (sp.chips) sp.chips.setPosition(b.x, faceY);
         sp.dust.setPosition(b.x, faceY);
-        for (const e of [sp.sprayL, sp.sprayR, sp.chips, sp.dust]) if (e) e.emitting = cutting;
+        // THROWN ONLY WHILE THE BELT IS TURNING. Soil coming off a stopped belt
+        // is the one thing that would give the burst away as a trick — the whole
+        // point is that the machine works in lunges, and the spray is the most
+        // visible evidence of work there is.
+        const on = cutting && (!tn || tn.beltOn !== false);
+        for (const e of [sp.sprayL, sp.sprayR, sp.chips, sp.dust]) if (e) e.emitting = on;
     }
 
     // The blade exits the far edge: retire the machines, then flood the last
@@ -8718,6 +9046,11 @@ console.log(
         this._setTrencherRunning(tn, false, false);
         this._runSpoil(tn.bore, tn.entryY - tn.progressPx, false);
         if (tn.workLabel) tn.workLabel.setVisible(false);
+        if (tn.badge) {
+            tn.badge.box.setVisible(false);
+            tn.badge.txt.setVisible(false);
+            if (tn.badge.bolt) tn.badge.bolt.setVisible(false);
+        }
 
         // The waterline just carries on: it runs from where it was holding
         // (LAG behind the blade) up to the far mouth in one smooth flood —
