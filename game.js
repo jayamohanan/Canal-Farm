@@ -619,6 +619,8 @@ class GameScene extends Phaser.Scene {
                     if (f) this.load.spritesheet(f, f, { frameWidth: fs2, frameHeight: fs2 });
                 }
             }
+            const BW = (AN.BURROW || {});
+            if (BW.ENABLED !== false && BW.FILE) this.load.image('burrow', BW.FILE);
             const FN = TM.FENCE || {};
             if (FN.ENABLED !== false && FN.FILE) this.load.image('fence_pole', FN.FILE);
             const BK = TM.BLOCK || {};
@@ -1299,6 +1301,7 @@ console.log(
                             (TM.MOBILE_TRIM || {}).COLS || map.width)) / 2)),
             props:      objects((TM.PROPS || {}).LAYER),// placed scenery (object layer)
             ranch:      objects((TM.ANIMALS || {}).LAYER),  // placed animals (object layer)
+            burrows:    objects(((TM.ANIMALS || {}).BURROW || {}).LAYER),   // warren mouths
             fenceData:  layer((TM.ANIMALS || {}).FENCE_LAYER) || [],  // upright fences
             // Canal cells a bridge makes crossable. Built here, with the grid,
             // rather than when the bridges are drawn — the farmer is created
@@ -1318,6 +1321,20 @@ console.log(
         // The span comes from the item's own size, the same numbers that draw
         // it: SIZE_W tiles across, SIZE tiles down (each defaulting to 1), laid
         // about the marker. So a deck is walkable exactly as far as it is drawn.
+        // GROUND NOTHING MAY USE — every tile under a rectangle named FORBIDDEN
+        // on the props layer. A whole tile is taken the moment any part of it is
+        // covered, because half a forbidden tile is not a thing an animal can
+        // stand on the clear half of.
+        const fbName = (TM.PROPS || {}).FORBIDDEN || 'forbidden';
+        grid.forbid = new Set();
+        for (const o of grid.props) {
+            if (o.name !== fbName || o.w <= 0 || o.h <= 0) continue;
+            const c0 = Math.floor(o.col), c1 = Math.ceil(o.col + o.w) - 1;
+            const r0 = Math.floor(o.row), r1 = Math.ceil(o.row + o.h) - 1;
+            for (let r = r0; r <= r1; r++)
+                for (let c = c0; c <= c1; c++) grid.forbid.add(c + ',' + r);
+        }
+
         const items = (TM.PROPS || {}).ITEMS || {};
         grid.bridged = new Set();
         for (const o of grid.props) {
@@ -1896,6 +1913,7 @@ console.log(
         this._buildFence(seg, gTop);
         this._buildProps(seg, gTop);
         this._buildAnimals(seg, gTop);
+        this._buildBurrows(seg, gTop);
         // AFTER the herd, because the tally counts what the level will produce
         // and a ranch's produce is one per animal — a number that does not exist
         // until the herd does.
@@ -3096,6 +3114,7 @@ console.log(
             for (let c = bleed; c < g.cols - bleed; c++) {
                 if (this._farmerBand(g, c) === 0) continue;
                 if (this._canalCell(g, c, r)) continue;      // never on water
+                if (this._offLimits(g, c, r)) continue;      // nor on closed ground
                 if (planted(c, r)) continue;                 // never on a seed
                 bare.push({ c, r });
                 // Eight-way, so a plot's diagonal corner counts as beside it.
@@ -3545,6 +3564,7 @@ console.log(
             for (let r = 0; r < g.rows; r++) {
                 for (let c = bleed; c < g.cols - bleed; c++) {
                     if (this._canalCell(g, c, r)) continue;
+                    if (this._offLimits(g, c, r)) continue;
                     open.push({ c, r, k: this._cellHash(c, r, 11) });
                 }
             }
@@ -3668,6 +3688,52 @@ console.log(
                     due: (stg[0] || 0) + ((stg[1] || 0) - (stg[0] || 0)) * this._cellHash(c, r, 15),
                 });
             }
+        }
+    }
+
+    // THE WARREN'S MOUTHS. One burrow per point on the burrow layer.
+    //
+    // Held back exactly as the animals are: each watches its nearest canal cell
+    // and takes its turn inside the same stagger, so the holes appear behind the
+    // water rather than the level opening with the ground already dug. Pushed
+    // onto the same waiting list, which is why nothing here draws or fades —
+    // that loop does it, and a burrow simply has no herd entry attached.
+    _buildBurrows(seg, gTop) {
+        const A  = CONFIG.ROAD.TILEMAP.ANIMALS || {}, B = A.BURROW || {};
+        const g  = this.tileGrid;
+        if (B.ENABLED === false || !g || !g.burrows || !g.burrows.length) return;
+        if (!this.textures.exists('burrow')) return;
+        const name = B.NAME || 'burrow';
+        const F     = seg.tunnel && seg.tunnel.flood;
+        const canal = F ? [...F.cells.values()] : [];
+        const stg   = A.STAGGER_MS || [0, 0];
+        const src   = this.textures.get('burrow').getSourceImage();
+        const h     = (B.SIZE !== undefined ? B.SIZE : 0.9) * g.tile;
+        const w     = h * (src.width / src.height);
+        for (const o of g.burrows) {
+            if (o.name !== name) continue;
+            const c = Math.floor(o.col), r = Math.ceil(o.row) - 1;
+            const x = g.left + o.col * g.tile, y = gTop + o.row * g.tile;
+            // A FLAT DEPTH, not one worked out from where it sits. Everything
+            // alive passes over a burrow, so it must never sort against an
+            // animal — least of all the rabbit whose hole it is.
+            const spr = this._addB(this.add.image(x, y, 'burrow')
+                .setOrigin(0.5, 1)                    // the mouth sits ON the mark
+                .setDisplaySize(w, h)
+                .setDepth(B.DEPTH !== undefined ? B.DEPTH : 1.46), seg);
+            let watch = null, bd = Infinity;
+            for (const cc of canal) {
+                const d = Math.abs(cc.col - c) + Math.abs(cc.row - r);
+                if (d < bd) { bd = d; watch = cc; }
+            }
+            if (!watch) continue;                     // no canal: it is simply there
+            const from = A.POP_FROM !== undefined ? A.POP_FROM : 0.35;
+            const sx = spr.scaleX, sy = spr.scaleY;
+            spr.setAlpha(0).setScale(sx * from, sy * from);
+            (seg.penWait || (seg.penWait = [])).push({
+                spr, watch, y, sx, sy,
+                due: (stg[0] || 0) + ((stg[1] || 0) - (stg[0] || 0)) * this._cellHash(c, r, 15),
+            });
         }
     }
 
@@ -3829,7 +3895,7 @@ console.log(
         const r = Math.ceil((ty - a.gTop) / g.tile) - 1;     // feet stand on the cell above the line
         const bleed = g.edgeCols || 0;
         if (c < bleed || c >= g.cols - bleed || r < 0 || r >= g.rows) return false;
-        return !this._canalCell(g, c, r);
+        return !this._canalCell(g, c, r) && !this._offLimits(g, c, r);
     }
 
     // SCATTER FROM THE FARMER, if this species does and he is close.
@@ -4033,6 +4099,14 @@ console.log(
 
     // Is there a canal — of any kind — on this cell? He wades through crops
     // happily but not through water, so branch and main alike are solid to him.
+    // IS THIS TILE OUT OF BOUNDS? Asked wherever the ground is tested for
+    // whether something may stand or walk on it, right beside the canal test —
+    // the two are the same kind of question and a caller should never have to
+    // remember that there are two of them.
+    _offLimits(g, col, row) {
+        return !!(g && g.forbid && g.forbid.size && g.forbid.has(col + ',' + row));
+    }
+
     _canalCell(g, col, row) {
         if (!g || col < 0 || col >= g.cols || row < 0 || row >= g.rows) return true;
         // A bridge is a way across. The water is still there — only the ban on
@@ -4063,6 +4137,7 @@ console.log(
             const row = Math.floor((y - f.gTop) / g.tile);
             if (this._farmerBand(g, col) !== f.band) return false;
             if (this._canalCell(g, col, row)) return false;
+            if (this._offLimits(g, col, row)) return false;
         }
         return true;
     }

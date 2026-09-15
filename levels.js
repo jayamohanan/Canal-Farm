@@ -79,7 +79,21 @@ const LEVEL_DATA = {
         // the ones before it grew, plus its own. The last one named is the new
         // one, and the one that reaches the roster.
 
+
         { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
+        { FILE: 'maps/levels/livestock/livestock_bunny.tmj', CROPS: { 1: 'carrot' }, RANCH: { SPECIES: 'bunny', COUNT:40} },
+
+                { FILE: 'maps/levels/vegetable/vegetable_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
+
+        { FILE: 'maps/levels/livestock/livestock_sheep.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'sheep', COUNT:60} },
+
+
+        //vegetable levels
+        { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
+        { FILE: 'maps/levels/vegetable/vegetable_02.tmj', CROPS: { 1: 'tomato', 2: 'potato' } },
+        { FILE: 'maps/levels/vegetable/vegetable_03.tmj', CROPS: {  1: 'tomato', 2: 'potato', 3: 'egg-plant' }},
+        { FILE: 'maps/levels/vegetable/vegetable_04.tmj', CROPS:  {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans' } },
+        { FILE: 'maps/levels/vegetable/vegetable_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
 
         //livestock levels
         { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
@@ -97,12 +111,7 @@ const LEVEL_DATA = {
         { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
         { FILE: 'maps/levels/livestock/livestock_cow.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'cow',} },
         
-        //vegetable levels
-        { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
-        { FILE: 'maps/levels/vegetable/vegetable_02.tmj', CROPS: { 1: 'tomato', 2: 'potato' } },
-        { FILE: 'maps/levels/vegetable/vegetable_03.tmj', CROPS: {  1: 'tomato', 2: 'potato', 3: 'egg-plant' }},
-        { FILE: 'maps/levels/vegetable/vegetable_04.tmj', CROPS:  {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans' } },
-        { FILE: 'maps/levels/vegetable/vegetable_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
+        
 
 
         

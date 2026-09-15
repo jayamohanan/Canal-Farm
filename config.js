@@ -97,7 +97,7 @@ var CONFIG = {
     DEBUG_PERF: true,        // log object / tween / timer / texture counts each
                              // time the world rebases (once per level). Climbing
                              // numbers = something is outliving its band
-    BATTERY_START_LEVEL: 10,
+    BATTERY_START_LEVEL: 50,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
     // BACKGROUND: {
@@ -281,7 +281,7 @@ var CONFIG = {
             { FILE:  'graphics/ui/icons/icons_01.webp',
               ICONS: 'tomato, potato, egg-plant, green-beans, melon,' +
                      'cow, chicken, bunny, sheep, pig,' +
-                     'churn, egg' },
+                     'churn, corn, egg, fleece, carrot' },
             { FILE:  'graphics/ui/icons/icons_02.webp',
               ICONS: 'mango, cherry, banana, orange, pomegranate' },
         ],
@@ -291,6 +291,11 @@ var CONFIG = {
         // the grid — a standalone texture in graphics/ui/, by name. Loaded from
         // this table, so an entry here is all a new one needs.
         //
+        // EMPTY, and that is the healthy state: every icon lives in a sheet.
+        // Kept because the escape hatch is worth having — the checkmark is
+        // 64x48 and the bolt 49x80, and art like that should not be padded
+        // into a 48px grid to join the club.
+        //
         // The sheets are searched FIRST, so moving an icon into a sheet is a
         // matter of adding its name there; an entry left behind here is dead
         // rather than conflicting.
@@ -298,7 +303,6 @@ var CONFIG = {
         // Anything in neither falls back to the fruit cropped out of its crop
         // sheet, so an unlock with no icon yet still shows something.
         ICONS: {
-            corn: 'corn_icon',
         },
         POP_MS:      420,    // the drop-in when a slot fills
 
@@ -858,6 +862,15 @@ var CONFIG = {
             PROPS: {
                 ENABLED: true,
                 LAYER: 'props',              // the Tiled object layer they sit on
+                // GROUND NOTHING MAY USE. A rectangle drawn on the props layer
+                // and given this name takes every tile it covers out of play:
+                // no animal spawns there, none wanders in, and the farmer will
+                // not walk through it on his way anywhere.
+                //
+                // Not tied to a species or a level — a map that wants a corner
+                // kept clear draws the box and the level obeys it, whatever it
+                // is farming. Draw as many as the map needs.
+                FORBIDDEN: 'forbidden',
                 // Cattle wait for their field. A cow stands at the edge of the
                 // tile it is looking at and only appears once THAT tile is fully
                 // grown, so the herd arrives as the reward for finishing a
@@ -966,6 +979,19 @@ var CONFIG = {
                     // purpose: the size difference is most of what says one
                     // holds cattle and the other holds birds.
                     coop:             { FILE: 'graphics/animals/chicken/coop.png', SIZE: 1.4, ORIGIN: [0.5, 1] },
+                    // Where the fleece comes off. SIZE is the HEIGHT, and this
+                    // art is WIDER than it is tall (290x258) where the barn is
+                    // taller than wide — so matching the barn's number would
+                    // measure the shed's short side against the barn's long one
+                    // and draw a building two tiles high. At 2.8 it comes out
+                    // about as wide as the barn and lower, which is what a
+                    // shearing shed is beside a cattle barn: long, not tall.
+                    shearing_shed:    { FILE: 'graphics/animals/sheep/shearing_shed.webp', SIZE: 5, ORIGIN: [0.5, 1] },
+                    // The smallest building in the set. The art is wider than
+                    // tall and SIZE is the HEIGHT, so this reads lower than the
+                    // number suggests: 1.6 stands it a little above the hen
+                    // coop and half again as wide, which is what a hutch is.
+                    hutch:            { FILE: 'graphics/animals/bunny/hutch.webp', SIZE: 4, ORIGIN: [0.5, 1] },
 
                     bridge_main_ns:   { FILE: 'graphics/bridge/bridge_main_ns.webp', SIZE:   2, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 3.15, AFTER_DIG_TILES: 4 },
                     bridge_main_ew:   { FILE: 'graphics/bridge/bridge_main_ew.webp', SIZE_W: 2, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 3.15, AFTER_DIG_TILES: 4 },
@@ -1518,6 +1544,13 @@ var CONFIG = {
                     // is that same fraction of the front's — otherwise the sheep
                     // would change height as it turned.
                     sheep: {
+                        // WHAT SHEARING LEAVES ON THE GRASS. The art is wider
+                        // than it is tall (72x50), and SIZE is the HEIGHT — so
+                        // 0.68 lays it out just under a tile across, about as
+                        // wide as the sheep it came off. Any taller and a fleece
+                        // starts reading as a second animal.
+                        PRODUCE: { NAME: 'fleece', FILE: 'graphics/animals/sheep/fleece.png',
+                                   SIZE: 0.68 },
                         SHEETS: {
                             ns: { FILE: 'graphics/animals/sheep/sheep_ns.webp', FRAME_W: 48, FRAME_H: 64 },
                             e:  { FILE: 'graphics/animals/sheep/sheep_e.webp',  FRAME_W: 64, FRAME_H: 60 },
@@ -1541,11 +1574,13 @@ var CONFIG = {
                         },
                         // Both sheets are 64 tall, so both facings take the same
                         // SIZE and the animal keeps its height as it turns.
-                        FACINGS: {
-                            n: { SHEET: 'ns', IDLE: 0, WALK: 1, EAT: 2, SIZE: 0.85 },
-                            s: { SHEET: 'ns', IDLE: 3, WALK: 4, EAT: 5, SIZE: 0.85 },
-                            e: { SHEET: 'e',  IDLE: 0, WALK: 1, EAT: 2, SIZE: 0.85 },
-                            w: { SHEET: 'e',  IDLE: 0, WALK: 1, EAT: 2, SIZE: 0.85, FLIP: true },
+                        
+                       
+                         FACINGS: {
+                            n: { SHEET: 'ns', IDLE: 0, WALK: 1, EAT: 2, SIZE: 1 },
+                            s: { SHEET: 'ns', IDLE: 3, WALK: 4, EAT: 5, SIZE: 1 },
+                            e: { SHEET: 'e',  IDLE: 0, WALK: 1, EAT: 2, SIZE: 1 },
+                            w: { SHEET: 'e',  IDLE: 0, WALK: 1, EAT: 2, SIZE: 1, FLIP: true },
                         },
                     },
 
@@ -1561,7 +1596,7 @@ var CONFIG = {
                         // a hundred corn plants. Produce has to be findable, and
                         // the player is looking for it.
                         PRODUCE: { NAME: 'egg', FILE: 'graphics/animals/chicken/egg.png',
-                                   ICON: 'egg_icon', SIZE: 0.68 },
+                                   SIZE: 0.68 },
                         SHEETS: {
                             e: { FILE: 'graphics/animals/chicken/chicken_e.webp', FRAME_W: 100, FRAME_H: 100 },
                         },
@@ -1602,7 +1637,7 @@ var CONFIG = {
                         // nearly as tall as the cow that made it, the other sits
                         // under a hen. Only the TIMING is shared (PRODUCE above).
                         PRODUCE: { NAME: 'churn', FILE: 'graphics/animals/cow/churn.png',
-                                   ICON: 'churn_icon', SIZE: 0.93 },
+                                   SIZE: 0.93 },
                         SHEETS: {
                             ns: { FILE: 'graphics/animals/cow/cow_ns.webp', FRAME_W: 57,  FRAME_H: 114 },
                             e:  { FILE: 'graphics/animals/cow/cow_e.webp',  FRAME_W: 128, FRAME_H: 84  },
