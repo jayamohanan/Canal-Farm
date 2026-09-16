@@ -72,6 +72,9 @@ class GameScene extends Phaser.Scene {
         this.firstLevelUpTimer  = true;
         this.mergeTutorialShown = false;
         this.mergePointer       = null;
+        this.slotHints          = null;   // the "put one here" arrows
+        this.slotHintPending    = false;  // …scheduled but not yet up
+        this.slotHintDone       = false;  // …shown and finished with
         this.unlockDisplayContainer  = null;
         this.unlockDisplayText       = null;
         this.unlockDisplayBatteryIcon= null;
@@ -439,7 +442,8 @@ class GameScene extends Phaser.Scene {
         );
     }
         this.load.image('coin',          'graphics/coin.png');
-        this.load.image('point',         'graphics/point.png');
+        this.load.image('point',         'graphics/ui/merge-grid/point.png');
+        this.load.image('down_arrow',    'graphics/ui/merge-grid/down-arrow.png');
         this.load.image('button',        'graphics/spawn_button3.png');
         // (grid_panel.png retired — the panel is drawn in createGrid)
         // Grain for the cell faces: neutral grey + blurred noise, blended over
@@ -690,8 +694,23 @@ console.log(
         const bgGfx = this.add.graphics();
         const sc = parseInt(CONFIG.BACKGROUND.GRADIENT_START_COLOR.substring(1), 16);
         const ec = parseInt(CONFIG.BACKGROUND.GRADIENT_END_COLOR.substring(1), 16);
-        bgGfx.fillGradientStyle(sc, sc, ec, ec, 1);
-        bgGfx.fillRect(0, 0, W, H);
+        // A TINT OVER THE GROUND, not the panel itself. At 0 nothing is drawn at
+        // all and the field's own colour is what the panel is made of.
+        const bgA = CONFIG.BACKGROUND.OPACITY !== undefined ? CONFIG.BACKGROUND.OPACITY : 1;
+        bgGfx.fillGradientStyle(sc, sc, ec, ec, bgA);
+        // THE UI HALF'S OWN CARD, rounded on all four of ITS corners — the two
+        // against the screen edge and the two against the farm.
+        //
+        // Drawn to partA rather than across the stage, because a full-screen
+        // fill would sit UNDER the rounded shape and show through its corners,
+        // which is the one thing rounding them is for. The farm half needs no
+        // fill: its camera covers that ground edge to edge.
+        const A = this.layoutConfig.partA;
+        const bgR = Math.round((CONFIG.BACKGROUND.CORNER_RADIUS || 0) * this.layoutConfig.scale);
+        if (bgA > 0) {
+            if (bgR > 0) bgGfx.fillRoundedRect(A.x, A.y, A.width, A.height, bgR);
+            else         bgGfx.fillRect(A.x, A.y, A.width, A.height);
+        }
         bgGfx.setDepth(0);
 
         // Gutters around every tile frame, before anything samples one. Must be
@@ -738,12 +757,18 @@ console.log(
             }
         }
 
+        this._panelBackdrop();
         this._buildPauseButton();
         this._buildRoster();
 
         // Endless mode: the landscape camera must ignore every UI/fixed
         // object created above — one-time snapshot now that create() is done.
         this._snapshotCamBIgnores();
+
+        // AFTER the snapshot, which is what builds the overlay camera: this is
+        // the one thing that has to be drawn above the farm, and promoting it
+        // before that camera exists would quietly do nothing.
+        this._buildSplitLine();
     }
 
     // ================================================================
@@ -1666,6 +1691,85 @@ console.log(
     // the field for the counter is one object crossing a camera boundary, so it
     // has to belong to exactly one of them or it is drawn twice, once per
     // viewport, at two different places on screen.
+    // GROUND UNDER THE PANEL, so its rounded corners open onto the farm rather
+    // than onto the page.
+    //
+    // Rounding the card cut four notches out of it, and what showed through was
+    // the canvas's own violet — the one colour on screen that belongs to nothing
+    // in the game. Laying the field's base tile behind the card fills those
+    // notches with the ground the farm is made of, so the corner reads as the
+    // panel sitting ON the land rather than as a hole in it.
+    //
+    // A TILE SPRITE, not a grid of images: it is one object however much it
+    // covers, it repeats the texture itself, and nothing here needs a cell to be
+    // addressable — this is scenery behind a panel, not ground anything stands
+    // on. Scaled so its tiles match the farm's, so the two line up at the seam.
+    _panelBackdrop() {
+        const TM = CONFIG.ROAD.TILEMAP || {};
+        const A = this.layoutConfig.partA;
+        if (!A || !this.textures.exists('terrain') || TM.TERRAIN_GROUND === undefined) return;
+        const tile = this.tileGrid && this.tileGrid.tile;
+        if (!tile) return;
+        const ts = this._addA(this.add.tileSprite(A.x, A.y, A.width, A.height,
+                'terrain', TM.TERRAIN_GROUND)
+            .setOrigin(0, 0)
+            // UNDER THE CARD, which sits at 0. Everything else in the panel is
+            // above that, so this cannot come between the card and its contents.
+            .setDepth(-1));
+        ts.tileScaleX = ts.tileScaleY = tile / (TM.FRAME || 128);
+
+        // SQUARE, AND FULL BLEED — deliberately.
+        //
+        // This is the backmost thing on the panel half, so anything rounded off
+        // it is not rounded into something else, it is rounded into the canvas:
+        // the page's own colour, showing through as two notches. Rounding only
+        // ever made sense while the brown card was the panel and this ground sat
+        // BEHIND it, filling the notches the card left.
+        //
+        // So the radius belongs to the card, which is now a tint over this. At a
+        // tint of 0 there is no rounded panel to see — and no bare canvas either,
+        // which is the trade that was asked for.
+        this.panelBackdrop = ts;
+    }
+
+    // THE RULE BETWEEN THE TWO HALVES.
+    //
+    // On the overlay camera, which is the only way it can sit ON the boundary.
+    // The farm camera's viewport begins at exactly this line, and it is drawn
+    // after the main one — so a line drawn by the main camera would have the
+    // half that falls on the farm's side painted over, leaving a rule half the
+    // width asked for and offset from where it was put.
+    _buildSplitLine() {
+        const S = (CONFIG.BACKGROUND || {}).SPLIT_LINE || {};
+        if (S.ENABLED === false) return;
+        const L = this.layoutConfig, B = L.partB;
+        if (!B) return;
+        const w = Math.max(1, (S.W !== undefined ? S.W : 3) * L.scale);
+        const g = this.add.graphics().setDepth(99998);
+        g.lineStyle(w, S.COLOR !== undefined ? S.COLOR : 0x364549,
+                       S.ALPHA !== undefined ? S.ALPHA : 0.9);
+        if (this.isPortrait) {
+            const y = B.y + B.height;              // the farm is the top band
+            g.lineBetween(0, y, this.scale.width, y);
+        } else {
+            const x = B.x;                         // the farm is the right half
+            g.lineBetween(x, 0, x, this.scale.height);
+        }
+        this._addTop(g);
+        this.splitLine = g;
+        // BORN HIDDEN IF THE TUTORIAL IS ALREADY UP. The start overlay is built
+        // earlier in create() than this is, so it cannot hide a line that does
+        // not exist yet — it leaves word instead, and this honours it.
+        if (this._splitLineOff) g.setVisible(false);
+    }
+
+    // Show or hide the rule between the halves, remembering the answer for a
+    // line that has not been built yet.
+    _showSplitLine(on) {
+        this._splitLineOff = !on;
+        if (this.splitLine && this.splitLine.scene) this.splitLine.setVisible(on);
+    }
+
     _addA(obj) {
         if (this.camB) this.camB.ignore(obj);
         return obj;
@@ -2946,8 +3050,7 @@ console.log(
         const pm   = this.isPortrait ? (R.PORTRAIT_SCALE || 1) : 1;
         const size = (R.SIZE || 46) * s * pm;
         const gap  = (R.GAP  || 8)  * s;
-        const total = n * size + (n - 1) * gap;
-        const x0 = (B.width - total) / 2 + size / 2;   // centred in the farm half
+        const step = size + gap;
         const depth = R.DEPTH !== undefined ? R.DEPTH : 99000;
 
         // Y is the top of the whole block. The name sits there and the slots go
@@ -2955,29 +3058,187 @@ console.log(
         // drift apart.
         const lSize = (R.LABEL_SIZE || 15) * s;
         const lGap  = (R.LABEL_GAP  || 5)  * s;
-        const label = this._addB(this.add.text(B.width / 2, (R.Y || 12) * s, '', {
-                fontSize: Math.max(8, Math.round(lSize)) + 'px',
-                fontFamily: CONFIG.FONT_FAMILY,
-                fontStyle: CONFIG.FONT_WEIGHT,
-                color: R.LABEL_COLOR || '#ffffff',
-                stroke: R.LABEL_STROKE || '#2b2013',
-                strokeThickness: (R.LABEL_STROKE_W !== undefined ? R.LABEL_STROKE_W : 3) * s,
-            }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(depth + 2), null);
-        const y = (R.Y || 12) * s + lSize + lGap + size / 2;
+        const labelY = (R.Y || 12) * s;
+        const y = labelY + lSize + lGap + size / 2;
 
-        this.roster = { slots: [], filled: 0, size, x0, y, gap, label };
-        this._setRosterLabel();
-        for (let i = 0; i < n; i++) {
-            const x = x0 + i * (size + gap);
-            // Graphics, not a rectangle: a rectangle has square corners and no
-            // way to round them. The cost is that fill and stroke are a drawing
-            // rather than properties, so every recolour goes through _paintSlot.
-            const box = this._addB(this.add.graphics({ x, y })
-                .setScrollFactor(0).setDepth(depth), null);
-            const slot = { box, x, y, icon: null };
-            this._paintSlot(slot, false);
-            this.roster.slots.push(slot);
+        // EVERY BLOCK IS BUILT, not just the one being played.
+        //
+        // The run is a handful of blocks long, so the whole strip is twenty-odd
+        // cells — cheap enough to lay out once and slide, and it means a block
+        // that has been finished keeps its icons instead of being wiped and
+        // reused. What has been done stays visible off to the left, and what is
+        // coming is visible off to the right, which is the point of a strip.
+        const names   = R.BLOCKS || [];
+        const count   = Math.max(1, names.length);
+        const blockW  = n * size + (n - 1) * gap;
+        const pitch   = blockW + (R.BLOCK_GAP !== undefined ? R.BLOCK_GAP : 34) * s;
+        const cx      = B.width / 2;
+
+        this.roster = { blocks: [], filled: 0, size, y, gap, step, cx, pitch,
+                        shift: 0, slideTw: null, produceSlot: null, block: undefined };
+
+        const GL = R.GROUP_LINE || {};
+        for (let b = 0; b < count; b++) {
+            const mid  = cx + b * pitch;              // this block's centre line
+            const left = mid - blockW / 2 + size / 2; // its first cell's centre
+            const blk  = { slots: [], baseX: mid, label: null };
+
+            // The block's NAME, centred over its own five. One label per block
+            // rather than one that renames itself: the strip carries more than
+            // one block on screen at a time now, and a single caption could only
+            // ever be telling the truth about one of them.
+            blk.label = this._addB(this.add.text(mid, labelY, names[b] || '', {
+                    fontSize: Math.max(8, Math.round(lSize)) + 'px',
+                    fontFamily: CONFIG.FONT_FAMILY,
+                    fontStyle: CONFIG.FONT_WEIGHT,
+                    color: R.LABEL_COLOR || '#ffffff',
+                    stroke: R.LABEL_STROKE || '#2b2013',
+                    strokeThickness: (R.LABEL_STROKE_W !== undefined ? R.LABEL_STROKE_W : 3) * s,
+                }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(depth + 2), null);
+            blk.label.baseX = mid;
+
+            for (let i = 0; i < n; i++) {
+                const bx = left + i * step;
+                // Graphics, not a rectangle: a rectangle has square corners and
+                // no way to round them. The cost is that fill and stroke are a
+                // drawing rather than properties, so every recolour goes through
+                // _paintSlot.
+                const box = this._addB(this.add.graphics({ x: bx, y })
+                    .setScrollFactor(0).setDepth(depth), null);
+                // baseX is where this cell sits with the strip at rest; `x` is
+                // where it is NOW. Everything aiming at a cell — the icon's
+                // flight, the caption under it — reads `x`, so nothing else has
+                // to know the strip moves.
+                const slot = { box, baseX: bx, x: bx, y, icon: null };
+                this._paintSlot(slot, false);
+                blk.slots.push(slot);
+            }
+
+            this.roster.blocks.push(blk);
         }
+
+        // ONE RULE BETWEEN TWO SETS, not two.
+        //
+        // Drawn as DIVIDERS owned by the strip rather than as ends owned by each
+        // block: a block that draws both of its own ends puts its right-hand
+        // rule and its neighbour's left-hand rule in the same gap, a stripe
+        // apart, which reads as a seam rather than as a division. There is one
+        // more divider than there are blocks — the two outermost close the strip
+        // off at each end.
+        this.roster.dividers = [];
+        if (GL.ENABLED !== false) {
+            const over = (GL.OVER !== undefined ? GL.OVER : 0.12) * size;
+            for (let b = 0; b <= count; b++) {
+                // NO RULE BEFORE THE FIRST BLOCK. A divider earns its place by
+                // separating two sets; the one at the very start of the run
+                // separates the first set from nothing, and reads as a stray
+                // mark rather than as a boundary.
+                //
+                // Its SLOT is kept as null rather than skipped, so a divider's
+                // index still matches the block it stands before — which is what
+                // lets the focus light the pair around the played block.
+                if (b === 0) { this.roster.dividers.push(null); continue; }
+                const bx = cx + (b - 0.5) * pitch;
+                const g = this._addB(this.add.graphics({ x: bx, y })
+                    .setScrollFactor(0).setDepth(depth + 1), null);
+                g.lineStyle(Math.max(1, (GL.W !== undefined ? GL.W : 2) * s),
+                            GL.COLOR !== undefined ? GL.COLOR : 0xfffdf6,
+                            GL.ALPHA !== undefined ? GL.ALPHA : 0.5);
+                g.lineBetween(0, -size / 2 - over, 0, size / 2 + over);
+                g.baseX = bx;
+                this.roster.dividers.push(g);
+            }
+        }
+        this._setRosterLabel();
+    }
+
+    // The block being played, or null before the first one is known.
+    _rosterBlock() {
+        const ro = this.roster;
+        if (!ro || !ro.blocks.length) return null;
+        return ro.blocks[Math.min(ro.blocks.length - 1, Math.max(0, ro.block || 0))];
+    }
+
+    // Put every moving piece where the strip's current offset says it goes.
+    //
+    // One place, because the cells, their icons, the labels, the caption and the
+    // end rules all travel as one object — and they are separate display objects
+    // that would otherwise drift a frame apart mid-slide.
+    _layoutRoster() {
+        const ro = this.roster;
+        if (!ro) return;
+        for (const blk of ro.blocks) {
+            for (const sl of blk.slots) {
+                sl.x = sl.baseX + ro.shift;
+                if (sl.box && sl.box.scene) sl.box.x = sl.x;
+                if (sl.icon && sl.icon.scene) sl.icon.x = sl.x;
+            }
+            if (blk.label && blk.label.scene) blk.label.x = blk.label.baseX + ro.shift;
+        }
+        for (const g of (ro.dividers || [])) {
+            if (g && g.scene) g.x = g.baseX + ro.shift;
+        }
+        if (ro.produce && ro.produce.scene && ro.produceSlot) {
+            ro.produce.x = ro.produceSlot.x;
+        }
+    }
+
+    // LIGHT THE BLOCK BEING PLAYED, pull the rest back.
+    //
+    // Alpha rather than colour, and on the pieces rather than on a container:
+    // the cells are drawn paths, so there is no tint to set — and a filled cell
+    // that has been dimmed must not come back looking like an empty one, which
+    // recolouring would risk and fading cannot.
+    _focusRoster(idx, snap) {
+        const R = CONFIG.ROSTER || {}, ro = this.roster;
+        if (!ro) return;
+        const dim = R.DIM_ALPHA !== undefined ? R.DIM_ALPHA : 0.3;
+        const ms  = snap ? 0 : (R.DIM_MS !== undefined ? R.DIM_MS : 340);
+        ro.blocks.forEach((blk, b) => {
+            const a = b === idx ? 1 : dim;
+            const lot = [...blk.slots.map((sl) => sl.box),
+                         ...blk.slots.map((sl) => sl.icon),
+                         blk.label].filter((o) => o && o.scene);
+            if (blk.alpha === a) return;
+            blk.alpha = a;
+            if (blk.tw) { blk.tw.stop(); blk.tw = null; }
+            if (ms <= 0) { for (const o of lot) o.setAlpha(a); return; }
+            blk.tw = this.tweens.add({ targets: lot, alpha: a,
+                duration: ms, ease: 'Sine.easeOut',
+                onComplete: () => { blk.tw = null; } });
+        });
+        // THE TWO RULES AROUND THE PLAYED BLOCK stay lit with it — they are the
+        // marks that say where this set begins and ends, so they belong to the
+        // light rather than to the strip's furniture. Divider b sits before
+        // block b, so the pair bounding block `idx` is idx and idx+1.
+        (ro.dividers || []).forEach((g, b) => {
+            if (!g || !g.scene) return;
+            const a = (b === idx || b === idx + 1) ? 1 : dim;
+            if (Math.abs(g.alpha - a) < 0.01) return;
+            if (ms <= 0) { g.setAlpha(a); return; }
+            this.tweens.add({ targets: g, alpha: a, duration: ms, ease: 'Sine.easeOut' });
+        });
+    }
+
+    // Walk the strip so that block `idx` and its name sit at the centre.
+    _slideRoster(idx, snap) {
+        const R = CONFIG.ROSTER || {}, ro = this.roster;
+        if (!ro) return;
+        const at = Math.max(0, Math.min(ro.blocks.length - 1, idx));
+        this._focusRoster(at, snap);
+        const want = -at * ro.pitch;
+        if (Math.abs(want - ro.shift) < 0.5) return;
+        if (ro.slideTw) { ro.slideTw.stop(); ro.slideTw = null; }
+        const ms = snap ? 0 : (R.SLIDE_MS !== undefined ? R.SLIDE_MS : 460);
+        if (ms <= 0) { ro.shift = want; this._layoutRoster(); return; }
+        const o = { v: ro.shift };
+        ro.slideTw = this.tweens.add({
+            targets: o, v: want, duration: ms, ease: 'Cubic.easeInOut',
+            onUpdate: () => { ro.shift = o.v; this._layoutRoster(); },
+            onComplete: () => {
+                ro.shift = want; this._layoutRoster(); ro.slideTw = null;
+            },
+        });
     }
 
     // Draw one slot, empty or filled.
@@ -3022,24 +3283,20 @@ console.log(
     // roster would rename itself for a farm the player has not reached.
     _setRosterLabel(levelIndex) {
         const R = CONFIG.ROSTER || {}, ro = this.roster;
-        if (!ro || !ro.label) return;
+        if (!ro || !ro.blocks.length) return;
         const per = Math.max(1, R.SLOTS || 5);
         const i   = Math.floor((levelIndex || 0) / per);
         if (i === ro.block) return;
-        // A NEW STRETCH EMPTIES THE ROW. The name and the slots describe the
-        // same span, so carrying vegetables into the Farmyard would have the
-        // label contradicting what is under it — and the empty slots would stop
-        // meaning "more to come here", which is the whole job they do.
-        if (ro.block !== undefined) {
-            for (const slot of ro.slots) {
-                if (slot.icon) { slot.icon.destroy(); slot.icon = null; }
-                this._paintSlot(slot, false);
-            }
-            ro.filled = 0;
-            this._setRosterProduce(null, null);   // the caption goes with the row
-        }
+        const first = ro.block === undefined;
         ro.block = i;
-        ro.label.setText((R.BLOCKS || [])[i] || '');
+        // THE STRIP MOVES; THE CELLS STAY. Each block owns its own five, so a
+        // finished block is not wiped and reused — it keeps its icons and slides
+        // away to the left while the next set comes to the centre. That is the
+        // whole difference between a strip and a row: what has been done stays
+        // where it was done.
+        ro.filled = 0;
+        this._setRosterProduce(null, null);   // the caption belongs to one cell
+        this._slideRoster(i, first);          // the first block is already there
     }
 
     // Name the newest slot's produce, under it.
@@ -3054,7 +3311,11 @@ console.log(
     _setRosterProduce(slot, name) {
         const R = CONFIG.ROSTER || {}, P = R.PRODUCE || {}, ro = this.roster;
         if (P.ENABLED === false || !ro) return;
-        if (!name) { if (ro.produce) ro.produce.setText(''); return; }
+        if (!name) {
+            ro.produceSlot = null;
+            if (ro.produce) ro.produce.setText('');
+            return;
+        }
         const s = this.layoutConfig.scale *
                   (this.isPortrait ? (R.PORTRAIT_SCALE || 1) : 1);
         const gap = (P.GAP !== undefined ? P.GAP : 3) * s;
@@ -3073,6 +3334,9 @@ console.log(
         const pretty = String(name).split(/[-_]/)
             .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
             .join(' ');
+        // WHICH CELL IT NAMES, kept — the row slides, and a caption pinned to
+        // the x the cell had when it was filled would be left behind by it.
+        ro.produceSlot = slot;
         ro.produce.setText(pretty).setPosition(slot.x, y);
     }
 
@@ -3088,8 +3352,18 @@ console.log(
     // would strand the whole handover.
     _fillRosterSlot(name, from, done) {
         const R = CONFIG.ROSTER || {}, ro = this.roster;
+        // THE ROW WALKS ON when the icon has landed, not when it set off — the
+        // cell has to be seen taking its icon before it is carried out of the
+        // middle, or the arrival happens somewhere the eye is not.
+        //
+        // Hung on `end` because every exit passes through it, animated or not,
+        // and a path that filled a cell without moving the row would leave the
+        // next level being dug off to one side.
         const end = () => { if (done) done(); };
-        if (R.ENABLED === false || !ro || ro.filled >= ro.slots.length) { end(); return; }
+        const blk = this._rosterBlock();
+        if (R.ENABLED === false || !ro || !blk || ro.filled >= blk.slots.length) {
+            end(); return;
+        }
 
         // THE SAME LOOKUP THE TALLY CELLS USE. It was resolved separately here,
         // with its own copy of the sheet arithmetic — so the roster and the
@@ -3102,8 +3376,12 @@ console.log(
             console.warn(`[roster] "${name}" has no icon — its slot will be blank`);
         }
 
-        const slot = ro.slots[ro.filled++];
+        const slot = blk.slots[ro.filled++];
         this._paintSlot(slot, true);
+        // The icon is born after its block was lit, so it missed that tween and
+        // would sit at full alpha in a dimmed block — or, once dimming is on a
+        // block the player has left, at full alpha in a dark one.
+        const litA = blk.alpha !== undefined ? blk.alpha : 1;
         // The caption lands WITH the icon, so it is written at each arrival
         // rather than here — except when there is no icon to wait for.
         if (!ic) {
@@ -3114,6 +3392,7 @@ console.log(
         const fit = ro.size * (R.ICON_FRAC !== undefined ? R.ICON_FRAC : 0.78);
         const spr = this._addB(this.add.image(slot.x, slot.y, ic.sheet, ic.frame)
             .setScrollFactor(0)
+            .setAlpha(litA)
             .setDisplaySize(fit, fit)
             .setDepth((R.DEPTH !== undefined ? R.DEPTH : 99000) + 1), null);
         slot.icon = spr;
@@ -3178,7 +3457,7 @@ console.log(
         const ms = R.POP_MS !== undefined ? R.POP_MS : 420;
         if (ms > 0) {
             spr.setScale(sx * 1.6, sy * 1.6).setAlpha(0);
-            this.tweens.add({ targets: spr, scaleX: sx, scaleY: sy, alpha: 1,
+            this.tweens.add({ targets: spr, scaleX: sx, scaleY: sy, alpha: litA,
                 duration: ms, ease: 'Back.easeOut',
                 onComplete: () => { this._setRosterProduce(slot, name); end(); } });
         } else { this._setRosterProduce(slot, name); end(); }
@@ -4613,8 +4892,28 @@ console.log(
             const camTop = (seg.levelIndex === 0)
                 ? this.camB.scrollY
                 : band.bandTop + g.h / 2 - this.camB.height / 2;
-            const want = camTop + (G.SCREEN_MARGIN !== undefined ? G.SCREEN_MARGIN : 0.25) * g.tile
-                       + labelH + size0 / 2;
+            // CLEAR OF THE ROSTER, not merely on screen.
+            //
+            // The margin below used to be measured from the top of the view,
+            // which was right while the strip was wiped and rebuilt for each
+            // block. It persists now — finished blocks stay on it and slide —
+            // so the top of the screen is permanently occupied, and a tally
+            // clamped only to the view rides up underneath it.
+            //
+            // Measured off the strip itself rather than from its config, so the
+            // caption under a filled cell is counted when there is one and not
+            // when there is not.
+            const ro = this.roster;
+            let below = (G.SCREEN_MARGIN !== undefined ? G.SCREEN_MARGIN : 0.25) * g.tile;
+            if (ro && ro.size) {
+                let foot = ro.y + ro.size / 2;
+                if (ro.produce && ro.produce.scene && ro.produce.text) {
+                    foot = Math.max(foot, ro.produce.y + ro.produce.height);
+                }
+                below = Math.max(below, foot +
+                    (G.ROSTER_CLEAR !== undefined ? G.ROSTER_CLEAR : 0.2) * g.tile);
+            }
+            const want = camTop + below + labelH + size0 / 2;
             if (yLine < want) yLine = want;
         }
         // SORTED WITH THE BOUNDARY IT STANDS ON, not on a flat number. The tally
@@ -9801,7 +10100,7 @@ console.log(
         p.batteryLevelText = levelText;
 
         // Show charge-rate label above the slot
-        p.chargeRateText.setText(`${chargePerMinute}`).setVisible(true);
+        p.chargeRateText.setText(this._bigNum(chargePerMinute)).setVisible(true);
         this._refreshTotalCharge(false);
         p.chargeRateBolt.setVisible(true);
 
@@ -9815,6 +10114,7 @@ console.log(
         };
         draggableBg.setData('batteryData', batteryData);
         this.chargingSlots[slotIndex] = { level, chargePerMinute, batteryData };
+        this._hideSlotHint();
     }
 
     removeBatteryFromSlot(slotIndex) {
@@ -10020,7 +10320,7 @@ console.log(
             .setDepth(10);
 
         const textX = iconX - L.coinIconSize / 2 - L.coinTextIconGap;
-        this.coinText = this.add.text(textX, coinY, `${this.coins}`, {
+        this.coinText = this.add.text(textX, coinY, this._bigNum(this.coins), {
             fontSize: L.coinTextSize,
             fontFamily: CONFIG.FONT_FAMILY,
             color: CONFIG.COIN_COUNTER.TEXT_COLOR,
@@ -10328,7 +10628,7 @@ console.log(
             .setDisplaySize(L.spawnBtnDisplayW, L.spawnBtnDisplayH)
             .setInteractive({ useHandCursor: true });
         this.spawnButtonText = this.add.text(
-            L.spawnCoinTextX, 0, `${this.spawnCost}`, {
+            L.spawnCoinTextX, 0, this._bigNum(this.spawnCost), {
                 fontSize: L.spawnCoinTextSize, fontFamily: CONFIG.FONT_FAMILY,
                 color: '#FFFFFF', fontStyle: CONFIG.FONT_WEIGHT,
             }).setOrigin(0.5);
@@ -10412,6 +10712,22 @@ console.log(
                 .setScrollFactor(0).setAlpha(0).setDepth(99), null);
         }
 
+        // AND A THIRD, for the overlay camera — which renders after BOTH of the
+        // others, so anything promoted onto it (the rule between the two halves)
+        // sits above two perfectly good masks and stays lit while the screen
+        // behind it goes dark.
+        //
+        // The same reasoning as camB's copy, one camera further up. Its depth
+        // clears the rule's, which is the only thing up there.
+        // THE RULE BETWEEN THE HALVES IS HIDDEN, not masked.
+        //
+        // It lives on the overlay camera, which renders after the other two, so
+        // a mask on either of them cannot reach it. Giving that camera a mask of
+        // its own does reach it — and lays a THIRD 75% wash over a screen that
+        // already has two, taking everything to about 94% black. The line is one
+        // thin rule; taking it away costs nothing and dims nothing else.
+        this._showSplitLine(false);
+
         // Position pointer based on spawn button location
         let pointerX = this.spawnButton.x;
         const pY = this.spawnButton.y + CONFIG.POINTER.OFFSET_Y;
@@ -10461,6 +10777,7 @@ console.log(
         if (this.startPointer) this.startPointer.destroy();
         this.startOverlay = null;
         this.startOverlayB = null;
+        this._showSplitLine(true);
         this.hasStartedPlaying = true;
         this.levelUpTimer = this.time.now;
         this.firstLevelUpTimer = true;
@@ -10468,7 +10785,14 @@ console.log(
 
     checkAndShowMergeTutorial() {
         if (!CONFIG.MERGE_TUTORIAL.ENABLED) return;   // disabled during development
-        if (!this.mergeTutorialShown && this.batteries.length === 2 && !this.mergePointer) {
+        // AT LEAST two, not exactly two.
+        //
+        // An exact test only passes on the single frame the count is 2, and the
+        // count does not only count spawns: a battery moved into a charging slot
+        // leaves this list, so two on the grid can read as one. Miss that frame
+        // and the lesson can never appear, because the number only climbs — which
+        // is why it seemed to need three batteries rather than two.
+        if (!this.mergeTutorialShown && this.batteries.length >= 2 && !this.mergePointer) {
             this.createMergeTutorial();
         }
     }
@@ -10508,6 +10832,122 @@ console.log(
         }
     }
 
+    // A MERGE HAPPENED — whether or not the hand was being shown for it.
+    //
+    // The next lesson used to be scheduled inside removeMergeTutorial, which
+    // only runs when that pointer is up. A player who merged without ever seeing
+    // the hand — merged early, or merged again later — got no arrows at all,
+    // because the thing that starts their clock had nothing to remove.
+    _afterMerge() {
+        this.removeMergeTutorial();
+        const H = CONFIG.SLOT_HINT || {};
+        if (H.ENABLED === false || this.slotHintDone || this.slotHintPending) return;
+        this.slotHintPending = true;
+        this.time.delayedCall(H.DELAY_MS !== undefined ? H.DELAY_MS : 900,
+            () => { this.slotHintPending = false; this._showSlotHint(); });
+    }
+
+    // AN ARROW OVER EACH EMPTY SLOT, nodding toward it.
+    //
+    // Three of them rather than one, because the lesson is about the row: a
+    // single arrow would read as "that slot", and the player would wonder what
+    // the other two are for. Down-and-back rather than a full bounce — the
+    // motion has to point, and a symmetric bob points at nothing.
+    _showSlotHint() {
+        const H = CONFIG.SLOT_HINT || {};
+        if (H.ENABLED === false || this.slotHintDone || this.slotHints) return;
+        if (!this.textures.exists('down_arrow') || !this.platforms) return;
+        // Not if the player got there first — three seconds is long enough for
+        // someone who already understood to have filled a slot, and an arrow
+        // pointing at a job already done is worse than no arrow.
+        if (this._anySlotFilled()) { this.slotHintDone = true; return; }
+
+        const s = this.layoutConfig.scale;
+        this.slotHints = [];
+        for (const p of this.platforms) {
+            if (!p || p.slotX === undefined) continue;
+            const size = p.slotSize || (100 * s);
+            const top  = p.slotY - size / 2;              // the case's top edge
+            // THE SAME INK AS THE POINTER, and drawn the same way. The art is a
+            // white silhouette, so a single tint would give a flat shape where
+            // the pointer has an outline — and two hints in the same tutorial
+            // looking like two different things is worse than either looking
+            // plain. Eight offset copies underneath make the outline; the ninth,
+            // on top, is the arrow itself.
+            const P = CONFIG.POINTER || {};
+            const strokeC = parseInt((P.STROKE_COLOR || '#6d5727').substring(1), 16);
+            const fillC   = parseInt((P.FILL_COLOR   || '#ffd251').substring(1), 16);
+            const hh = (H.SIZE || 46) * s;
+            const img = this._addA(this.add.container(p.slotX, top)
+                .setDepth(103).setAlpha(0));
+            const leaf = (tint, dx, dy) => {
+                const a = this.add.image(dx, dy, 'down_arrow').setTint(tint);
+                a.displayHeight = hh;
+                a.displayWidth  = hh * (a.frame.width / a.frame.height);
+                img.add(a);
+                return a;
+            };
+            const ring = Math.max(1, (P.STROKE_WIDTH || 3) * s);
+            for (let ang = 0; ang < 360; ang += 45) {
+                const rad = ang * Math.PI / 180;
+                leaf(strokeC, Math.cos(rad) * ring, Math.sin(rad) * ring);
+            }
+            leaf(fillC, 0, 0);
+            // IT STARTS ABOVE THE CASE and travels DOWN a set distance, so the
+            // stroke carries the arrow across the top edge — the crossing is
+            // what reads as "in here". Start and distance are independent now:
+            // shortening the stroke pulls its REACH back, not its origin. They
+            // were coupled before, with the start measured back from the end, so
+            // halving the run moved the arrow instead of shortening it.
+            //
+            // The start is clamped on screen. Measured from the slot alone it
+            // sits above the canvas whenever the slots are high in the panel,
+            // and most of the stroke happens where nobody can see it.
+            //
+            // `hh` rather than the container's own displayHeight: a container
+            // has no intrinsic size — its height is 0 until one is set — so
+            // asking it how tall it is returns nothing, and SETTING its
+            // displayHeight divides by that nothing and scales it to infinity.
+            // That is what made these disappear.
+            const floor = hh / 2 + 4 * s;
+            const yStart = Math.max(floor,
+                top - (H.START_ABOVE !== undefined ? H.START_ABOVE : 0.25) * size);
+            const yEnd = yStart + (H.TRAVEL !== undefined ? H.TRAVEL : 0.275) * size;
+            img.y = yStart;
+            this.tweens.add({ targets: img, alpha: 1,
+                duration: H.FADE_MS !== undefined ? H.FADE_MS : 260 });
+            this.tweens.add({
+                targets: img, y: yEnd,
+                duration: H.MS || 380, ease: H.EASE || 'Sine.easeInOut',
+                yoyo: true, repeat: -1,
+            });
+            this.slotHints.push(img);
+        }
+    }
+
+    _anySlotFilled() {
+        for (let i = 0; i < 3; i++) if (this.chargingSlots && this.chargingSlots[i]) return true;
+        return false;
+    }
+
+    // Gone for good once a battery is in. `slotHintDone` is what stops it coming
+    // back when a slot is later emptied — the lesson was learnt, and a hint that
+    // returns reads as the game not having noticed.
+    _hideSlotHint() {
+        this.slotHintDone = true;
+        if (!this.slotHints) return;
+        const H = CONFIG.SLOT_HINT || {};
+        const lot = this.slotHints;
+        this.slotHints = null;
+        for (const img of lot) {
+            if (!img || !img.scene) continue;
+            this.tweens.killTweensOf(img);
+            this.tweens.add({ targets: img, alpha: 0,
+                duration: H.FADE_MS !== undefined ? H.FADE_MS : 260,
+                onComplete: () => img.destroy() });
+        }
+    }
+
     spawnBattery() {
         if (this.isWatchingAd) return;  // Block spawning during ad
         if (this.coins < this.spawnCost) return;
@@ -10520,9 +10960,14 @@ console.log(
         if (!emptyCell) return;
         this.coins -= this.spawnCost;
         this.updateCoinDisplay();
-        this.spawnBatteryInGrid(emptyCell.row, emptyCell.col, this.spawnButtonLevel);
+        // AFTER THE BATTERY ACTUALLY EXISTS. Spawning is async — it waits on the
+        // battery's texture before the new battery joins the list — so a check
+        // fired on the next line counts the grid as it was BEFORE this spawn.
+        // That is one battery behind, which is why the merge lesson appeared a
+        // click late: two on the grid still read as one.
+        this.spawnBatteryInGrid(emptyCell.row, emptyCell.col, this.spawnButtonLevel)
+            .then(() => this.checkAndShowMergeTutorial());
         if (this.startOverlay) this.removeStartOverlay();
-        this.checkAndShowMergeTutorial();
         this.updateSpawnButton();
     }
 
@@ -10549,7 +10994,7 @@ console.log(
             if (nl > this.spawnButtonLevel) {
                 this.spawnButtonLevel = nl;
                 this.spawnCost = nl * 10;
-                this.spawnButtonText.setText(`${this.spawnCost}`);
+                this.spawnButtonText.setText(this._bigNum(this.spawnCost));
                 const iconLvl = getBatteryIconLevel(nl);
                 await this.assets.ensureBattery(iconLvl);
                 if (this.spawnButtonIcon) {
@@ -10689,7 +11134,7 @@ console.log(
     }
 
     mergeBatteries(dragged, target, tRow, tCol) {
-        if (this.mergePointer) this.removeMergeTutorial();
+        this._afterMerge();
         this.removeBattery(dragged);
         this.removeBattery(target);
         const newLevel = target.level + 1;
@@ -10773,7 +11218,7 @@ console.log(
     }
 
     mergeBatteriesInSlot(dragged, target, targetSlotIndex) {
-        if (this.mergePointer) this.removeMergeTutorial();
+        this._afterMerge();
         if (dragged.inGrid) {
             this.removeBattery(dragged);
         } else if (dragged.inChargingSlot) {
@@ -10828,7 +11273,7 @@ console.log(
             p.slotBgFilled.setVisible(true);
             p.batterySprite    = bd.sprite;
             p.batteryLevelText = bd.levelText;
-            p.chargeRateText.setText(`${cpm}`).setVisible(true);
+            p.chargeRateText.setText(this._bigNum(cpm)).setVisible(true);
             this._refreshTotalCharge(false);
             p.chargeRateBolt.setVisible(true);
         }
@@ -10955,7 +11400,7 @@ console.log(
                 if (slot.batteryData) slot.batteryData.level = slot.level;
                 if (p.batterySprite)    p.batterySprite.setTexture(`battery${getBatteryIconLevel(slot.level)}`);
                 if (p.batteryLevelText) p.batteryLevelText.setText(`LVL ${slot.level}`);
-                p.chargeRateText.setText(`${slot.chargePerMinute}`);
+                p.chargeRateText.setText(this._bigNum(slot.chargePerMinute));
             }
         }
         this.updateSpawnButton();
@@ -10976,7 +11421,7 @@ console.log(
     updateCoinDisplay() {
         // Text is right-aligned (origin 1, 0.5), so its right edge stays fixed
         // at coinText.x and the icon never needs to move.
-        this.coinText.setText(`${this.coins}`);
+        this.coinText.setText(this._bigNum(this.coins));
         this.updateSpawnButton();
     }
 

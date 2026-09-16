@@ -107,6 +107,39 @@ var CONFIG = {
      BACKGROUND: {
         GRADIENT_START_COLOR: "#B6915c",
         GRADIENT_END_COLOR: "#B6915c",
+        // HOW OPAQUE THE PANEL CARD IS over the ground behind it. Below 1 the
+        // field's texture reads through, so the panel sits ON the land rather
+        // than beside it — the ground sheet covers the whole panel, not just the
+        // corners, so this shows it everywhere at once.
+        //
+        // There is a floor: the panel carries white text and battery art, and
+        // once the ground shows enough to be interesting it starts taking
+        // contrast from them.
+        OPACITY: 0,
+
+        // THE SEAM between the panel and the farm. Both halves are made of the
+        // same ground at the same scale now, so without a rule they read as one
+        // continuous field with machinery sitting on it — the line is what says
+        // these are two different things.
+        //
+        // Drawn on the OVERLAY camera, so it lands ON the boundary rather than
+        // beside it: the farm camera starts exactly at this x and would cover
+        // the half of the line that falls on its side.
+        SPLIT_LINE: {
+            ENABLED: true,
+            W:      3,          // px @ design scale
+            COLOR:  0x7E6044,   // the tilled-soil brown, so the seam belongs to
+                                // the ground it divides rather than to the UI
+            ALPHA:  0.9,
+        },
+
+        // The UI PANEL's four corners, px @ design scale. 0 squares it off.
+        //
+        // This fill is the panel half only, not the whole stage: the farm's
+        // camera covers its own half edge to edge, and a stage-wide fill would
+        // sit under the rounded shape and show through the very corners being
+        // rounded.
+        CORNER_RADIUS: 26,
     },
 
     // ── The stage ─────────────────────────────────────────────────────────────
@@ -223,6 +256,39 @@ var CONFIG = {
             GAP:     3,          // below the slots
         },
 
+        // ── THE STRIP ───────────────────────────────────────────────────
+        // EVERY BLOCK IS ON THE STRIP AT ONCE — its five cells and its name —
+        // laid end to end, with the block being played centred on screen. The
+        // neighbours sit off to either side, part-visible, so the run reads as
+        // something you are moving THROUGH rather than one row that empties and
+        // refills.
+        //
+        // Finishing a block slides the whole strip left by one block, bringing
+        // the next set and its name to the centre. A finished block is not
+        // wiped: it keeps its icons and slides away with them.
+        SLIDE_MS: 520,       // one block's worth of travel
+        // ONLY THE BLOCK BEING PLAYED IS LIT. The others stay on the strip —
+        // that is the whole point of it — but pulled back far enough that the
+        // eye is never asked which set it should be reading. Position says where
+        // you are in the run; this says where you are NOW.
+        DIM_ALPHA: 0.3,      // everything not in the focused block
+        DIM_MS:    340,      // fades with the slide, a touch quicker
+        BLOCK_GAP: 34,       // between one block's five and the next, px @ design.
+                             // Wider than the gap between cells, or the strip
+                             // reads as one long row of twenty rather than as
+                             // four sets of five
+        // The five marked off as a GROUP — a thin light rule standing at each
+        // end of the block. Without them a sliding row has no edges and the run
+        // reads as one endless ribbon, which loses the "five to a block" shape
+        // the label above is naming.
+        GROUP_LINE: {
+            ENABLED: true,
+            W:      2,       // px at design scale
+            COLOR:  0xfffdf6,
+            ALPHA:  0.5,
+            GAP:    7,       // from the end cell's edge, px at design scale
+            OVER:   0.12,    // taller than the cells, in cell heights, each end
+        },
         SIZE:    46,         // slot side, px at design scale
         RADIUS:  12,         // corner rounding, px at design scale. Clamped to
                              // half the side, where the cell becomes a circle.
@@ -234,9 +300,14 @@ var CONFIG = {
                              // strip of cells rather than five loose buttons.
                              // Their strokes fall on the same line at each seam,
                              // which is what draws the divider between them
-        Y:       12,         // down from the top of the farm half — to the top of
+        Y:       2,          // down from the top of the farm half — to the top of
                              // the NAME, with the slots below it. One number
-                             // moves the whole block
+                             // moves the whole strip.
+                             //
+                             // Hard against the top: the strip is a readout of
+                             // where you are in the run, not part of the farm,
+                             // and every pixel it leaves above itself is a pixel
+                             // of field it is taking below
         // Pale, so a dark icon reads against it — the farm behind is earth and
         // foliage, and a light panel separates the roster from it without a
         // border round the whole thing.
@@ -548,8 +619,7 @@ var CONFIG = {
     },
 
     POINTER: {
-        TUTORIAL_ENABLED: false,       // set true just before shipping — the start mask +
-                                       // spawn-button pointer are off during development
+        TUTORIAL_ENABLED: true,        // the start mask + spawn-button pointer
         SCALE: 1,
         FILL_COLOR: "#ffd251",
         STROKE_COLOR: "#6d5727",
@@ -567,12 +637,51 @@ var CONFIG = {
     },
 
     MERGE_TUTORIAL: {
-        ENABLED: false,                // set true just before shipping — the swap-to-merge
-                                       // hand animation is disabled during development
+        ENABLED: true,                 // the swap-to-merge hand animation
         POINTER_OFFSET_Y: 50,
         ANIMATION_DURATION: 1000,
         ANIMATION_REPEAT: -1,
         ANIMATION_EASE: 'Sine.easeInOut',
+    },
+
+    // ── "PUT ONE HERE" ────────────────────────────────────────────────────────
+    // The step after merging. Having made a bigger battery, the player has no
+    // reason to guess that it goes in a slot — so an arrow drops toward each of
+    // the three, saying where without saying anything.
+    //
+    // It waits DELAY_MS after the merge lesson ends rather than replacing it on
+    // the spot: two hints in the same second read as one busy screen, and the
+    // merge wants a beat to land before the next thing asks for attention.
+    //
+    // It leaves the moment ANY slot is filled. The lesson is "batteries go in
+    // slots", and one battery in one slot proves it was learnt — holding the
+    // arrows over the remaining two would turn a hint into nagging.
+    SLOT_HINT: {
+        ENABLED:   true,
+        DELAY_MS:  900,      // after a merge. A beat for the merge to land, not
+                             // a wait — at three seconds the player has already
+                             // started looking for the next thing to do, and the
+                             // arrows arrive as an answer to a question they
+                             // gave up on
+        SIZE:      23,       // arrow height, px @ design scale
+        // IT CROSSES THE CASE'S TOP EDGE rather than hovering above it. Ending
+        // outside the slot leaves the arrow pointing at a boundary; driving it
+        // INTO the slot is what says "in here" rather than "down there".
+        //
+        // START and DISTANCE, not start and end. They used to be coupled — the
+        // start was measured back from the end — so shortening the stroke moved
+        // the arrow's resting place instead of its reach, which is the opposite
+        // of what shortening a stroke should do.
+        START_ABOVE: 0.209,  // where it begins, in slot heights ABOVE the case's
+                             // top edge. Clamped so it never starts off-screen,
+                             // which happens when the slots sit high in the panel
+        TRAVEL:      0.193,  // how far it travels down, in slot heights.
+                             // Trimmed evenly at both ends — 15% of the run off
+                             // each — so the stroke shrank about its own middle
+                             // and the arrow did not drift up or down with it
+        MS:        380,      // one stroke, down and back
+        EASE:     'Sine.easeInOut',
+        FADE_MS:   260,      // in when it appears, out when a slot is filled
     },
 
     COIN_REWARD_ANIMATION: {
@@ -2379,7 +2488,14 @@ var CONFIG = {
                 // Pushed down into the field in that case, by the least that
                 // brings it back. Short levels are untouched: they have a screen
                 // of room above them.
-                SCREEN_MARGIN: 0.25, // least clearance from the top, in tiles
+                SCREEN_MARGIN: 0.25, // least clearance from the top, in tiles —
+                                     // the floor, used when the roster is off
+                ROSTER_CLEAR:  0.2,  // clearance below the ROSTER STRIP, in
+                                     // tiles. The strip persists now rather than
+                                     // being wiped per block, so the top of the
+                                     // screen is permanently spoken for and a
+                                     // tally kept merely on-screen would sit
+                                     // under it
                 COLOR:      0xfffdf6, ALPHA: 0.9,
                 DONE_COLOR: 0xc9d8b6,          // when its last one is in
                 STROKE_COLOR: 0x5c4a33, STROKE_ALPHA: 0.85, STROKE_W: 2,
