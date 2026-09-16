@@ -97,7 +97,7 @@ var CONFIG = {
     DEBUG_PERF: true,        // log object / tween / timer / texture counts each
                              // time the world rebases (once per level). Climbing
                              // numbers = something is outliving its band
-    BATTERY_START_LEVEL: 1,
+    BATTERY_START_LEVEL: 10,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
     // BACKGROUND: {
@@ -525,7 +525,7 @@ var CONFIG = {
         FILLED_BG_COLOR: "#eaf0f6",
         INSET_SHADOW_COLOR: "#364549",
         INSET_BORDER_WIDTH: 3.5,
-        // Grain over the flat cell colour. graphics/cell_noise.png is neutral
+        // Grain over the flat cell colour. ui/merge-grid/cell_noise.png is neutral
         // grey with blurred noise, blended over the fill when the cell faces are
         // baked — so this is the same composite you would build in an image
         // editor, except the colour underneath stays a config value and one
@@ -1107,21 +1107,30 @@ var CONFIG = {
                     // coop and half again as wide, which is what a hutch is.
                     hutch:            { FILE: 'graphics/animals/bunny/hutch.webp', SIZE: 4, ORIGIN: [0.5, 1] },
 
-                    bridge_main_ns:   { FILE: 'graphics/bridge/bridge_main_ns.webp', SIZE:   2, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 3.15, AFTER_DIG_TILES: 4 },
-                    bridge_main_ew:   { FILE: 'graphics/bridge/bridge_main_ew.webp', SIZE_W: 2, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 3.15, AFTER_DIG_TILES: 4 },
-                    // A ONE-TILE BRIDGE HAS ITS OWN ART at half the size, and
-                    // has to. Drawn from the two-tile file it would be squeezed
-                    // 2.4x, and the GPU minifies by reading four texels per
-                    // screen pixel however many actually fall there — at 2.4x
-                    // that is four out of six, and WHICH four moves with the
-                    // sprite, so the planks crawled whenever the camera did. At
-                    // 1.2x the four samples cover the footprint and it sits
-                    // still. The same rule holds for any art added later:
-                    // anything drawn below about 1.5x its source will crawl.
-                    bridge_branch_ns: { FILE: 'graphics/bridge/bridge_branch_ns.webp', SIZE:   1, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 1.60 },
-                    bridge_branch_ew: { FILE: 'graphics/bridge/bridge_branch_ew.webp', SIZE_W: 1, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 1.60 },
-                    bridge_minor_ns:  { FILE: 'graphics/bridge/bridge_branch_ns.webp', SIZE:   1, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 1.60 },
-                    bridge_minor_ew:  { FILE: 'graphics/bridge/bridge_branch_ew.webp', SIZE_W: 1, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 1.60 },
+                    // ONLY THE EAST-WEST MAIN BRIDGE EXISTS.
+                    //
+                    // The north-south main deck and both branch decks were
+                    // declared before their art was drawn, and the art has since
+                    // been removed. Every prop's file is fetched at boot whether
+                    // a map names it or not, so a declaration without a drawing
+                    // is three failed requests on every load — and a prop that
+                    // silently falls back to a placeholder if a map ever does
+                    // name it. Add the entry back with the picture.
+                    //
+                    // 2.25, not 2: the art now carries its own shadow, so the
+                    // WOODEN DECK is only part of the trimmed rectangle and a
+                    // 2-tile frame leaves the deck short of the far bank. The
+                    // extra quarter is shadow, and the walkable span is rounded
+                    // to whole tiles — so this widens the picture without
+                    // widening the ground the farmer may cross on.
+                    bridge_main_ew:   { FILE: 'graphics/bridge/bridge_main_ew.webp', SIZE_W: 2.25, ORIGIN: [0.5, 0.5], WALKABLE: true, DEPTH: 3.15, AFTER_DIG_TILES: 4 },
+                    // WHEN A ONE-TILE BRIDGE IS DRAWN, it needs its own art at
+                    // half the size rather than the two-tile file squeezed down.
+                    // The GPU minifies by reading four texels per screen pixel
+                    // however many actually fall there — at 2.4x that is four
+                    // out of six, and WHICH four moves with the sprite, so the
+                    // planks crawl whenever the camera does. Anything drawn
+                    // below about 1.5x its source will crawl the same way.
 
                     // HAND-PLACED ANIMALS BORROW THE SPECIES' ART rather than
                     // naming files of their own, so a cow is described once and
@@ -2361,7 +2370,7 @@ var CONFIG = {
             // timer — you see the water land on it. One row of 128px frames.
             PLANT_WATER: {
                 ENABLED: true,
-                FILE:    'graphics/plant-water.png',
+                FILE:    'graphics/plant-water.webp',
                 FRAMES:  8,
                 FPS:     6,     // halved from 12 — the whole splash now runs
                                 // ~1.3s instead of ~0.67s
@@ -2681,10 +2690,6 @@ var CONFIG = {
             CROP_GROW_MS: 1000,     // time between growth stages
             CROP_WET:     0.15,     // canal-cell fill fraction that counts as "watered"
 
-            // A patch of worked soil under each plant (graphics/plant-base.png),
-            // centred on the stem base and drawn UNDER the plant — and under
-            // every other plant too, so a base can never cover the crop in front
-            // of it.
             // The worked patch a plant stands in. It is a FULL TILE from the
             // terrain sheet's tilled row, not a small stamp — so the patch is
             // cut to the shape of the planted area, ragged where it meets bare
@@ -3226,11 +3231,9 @@ var CONFIG = {
             ROW_ALPHA: [0.8, 0.85, 0.9, 0.95],
 
             // ── LILIES ON THE LAKE ──────────────────────────────────────
-            // COMPOSED, not scattered. The canal's lilies (ROAD.LILY) are
-            // placed by rule as the water reaches each stretch, which suits a
-            // ditch — one pad here, a clump there, nobody looking. The lake is
-            // the opening shot and holds still, so its pads are arranged in
-            // Tiled and read back exactly as drawn: clusters, a flower on a
+            // COMPOSED, not scattered. The lake is the opening shot and holds
+            // still, so its pads are arranged in Tiled and read back exactly as
+            // drawn: clusters, a flower on a
             // particular pad, clear water where the canal mouth opens. None of
             // that is expressible as a scatter rule.
             //
@@ -3997,70 +4000,6 @@ var CONFIG = {
         // width running down its middle. Pads are pushed out toward a bank
         // (BANK_BIAS) rather than sitting on the centre line — pads gather at
         // the edges of real water, and the middle stays clear.
-        LILY: {
-            ENABLED: true,
-            MAIN_WATER:   0.72,    // water share of ONE main tile, from the seam out
-            BRANCH_WATER: 0.32,    // water share of a branch tile, centred
-            BANK_BIAS:    0.85,    // how far toward the bank a cluster sits: 0 = on
-                                   // the centre line, 1 = pad edge touching the bank
-            CLUSTERS_MIN: 2,       // lilies on the MAIN canal per stretch
-            CLUSTERS_MAX: 3,
-            // The art comes in two kinds: lily1/lily2 are single pads, lily3/
-            // lily4 are ready-made clumps. Nothing is assembled from singles —
-            // each lily is ONE image. Singles are randomly rotated; clumps are
-            // placed as drawn. A clump is COMBO_SCALE wider, being several
-            // pads' worth of art in the one picture.
-            COMBO_CHANCE: 0.45,    // odds a lily is a clump rather than a single
-            COMBO_SCALE:  1.4,     // clump width vs. a single's
-            SIZE:         0.67,    // single-pad width as a fraction of a tile
-                                   // (height follows — the art keeps its aspect)
-            SIZE_VAR:     0,       // ± random size spread per lily. 0 = every
-                                   // lily of a kind is exactly this size
-            MIN_GAP:      0.12,    // least spacing between lilies along the canal,
-                                   // as a fraction of the stretch's length
-            SPAN:        [0.08, 0.9],  // where clusters may sit along the stretch
-            REVEAL_LAG:   1.2,     // how far past a cluster the waterline must be
-                                   // before it appears, in tiles
-            FADE_MS:      520,     // fade-in once revealed
-            POP_FROM:     0.55,    // it pops in rather than appearing: starts this
-            POP_MS:       620,     // size and springs up to full over POP_MS
-            POP_EASE:     'Back.easeOut',   // the small overshoot at the end
-            DEPTH:        1.57,    // above the water (1.55) and its head (1.56)
-
-            // ── Branches ─────────────────────────────────────────────────────
-            // One lily per branch, on a random cell of it. A branch channel is
-            // barely a third of a tile wide, so it gets its own smaller size —
-            // the main-canal size would not fit — and singles only: a clump is
-            // wider than the whole branch channel.
-            BRANCH:       false,   // OFF: a branch channel is a third of a tile
-                                   // wide, so a pad in one is too small to read.
-                                   // Set true to put them back — the placement
-                                   // below still works
-            BRANCH_SIZE:  0.24,    // single-pad width as a fraction of a tile
-            BRANCH_COMBO: false,   // allow clumps in branches (they will overhang)
-
-            // ── The breathing ────────────────────────────────────────────────
-            // The whole point of the pads: still water reads as dead, so they
-            // must never come to rest. All of these run forever, yoyoing, each
-            // with its own duration and a random start delay so no two pads move
-            // together. The lily stays where it was put — it wanders about that
-            // spot, it does not travel.
-            ROCK_DEG:     11,      // rock about the pad's own centre (degrees)
-            ROCK_MS:     [1700, 2600],   // one way; randomised per pad
-            DRIFT:        0.13,    // wander WITH and AGAINST the flow, as a
-                                   // fraction of a tile — the give and take of
-                                   // the current pushing at the pad
-            DRIFT_CROSS:  0.05,    // the smaller sway across the channel. Kept
-                                   // under DRIFT so the motion reads as being
-                                   // along the water, not random jitter, and
-                                   // capped at run time by the room the bank
-                                   // leaves — a branch pad has almost none
-            DRIFT_MS:    [1500, 2300],   // the two axes run at different rates on
-                                   // purpose, so the path never repeats itself
-            SCALE_AMP:    0.06,    // size pulse (0 = off) — the swell passing
-                                   // under
-            SCALE_MS:    [1300, 2100],
-        },
     },
 };
 
