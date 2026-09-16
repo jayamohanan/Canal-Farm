@@ -21,7 +21,7 @@
  * - Charge values are always determined by the player's level, not by battery type
  * 
  * All sprite files should be placed in: graphics/battery/
- * For example: graphics/battery/lamp_1.png, graphics/battery/suitcase_1.png
+ * For example: graphics/battery/lamp_1.webp, graphics/battery/suitcase_1.webp
  * 
  * File names are auto-generated: display name → lowercase → spaces to underscores → add _1, _2, _3
  */
@@ -263,12 +263,12 @@ function getBatteryFileName(level) {
 function getBatteryData(level) {
     const info = getBatteryInfo(level);
     if (!info) {
-        return { fileName: `battery_${level}.png`, displayName: `Battery ${level}` };
+        return { fileName: `battery_${level}.webp`, displayName: `Battery ${level}` };
     }
     
     const displayName = info.name;
     const fileBase = displayNameToFileBase(info.name);
-    const fileName = `${fileBase}_${info.position}.png`;
+    const fileName = `${fileBase}_${info.position}.webp`;
     return { fileName, displayName };
 }
 

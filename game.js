@@ -448,7 +448,7 @@ class GameScene extends Phaser.Scene {
         // (grid_panel.png retired — the panel is drawn in createGrid)
         // Grain for the cell faces: neutral grey + blurred noise, blended over
         // the flat colour at bake time (see _makeCellTextures).
-        this.load.image('cell_noise',    'graphics/ui/merge-grid/cell_noise.png');
+        this.load.image('cell_noise',    'graphics/ui/merge-grid/cell_noise.webp');
         this.load.image('bolt',          'graphics/ui/bolt.png');
 
         // The trencher's art: two parts, each its own 5-frame animation. They
@@ -465,14 +465,17 @@ class GameScene extends Phaser.Scene {
                 { frameWidth: TR.CTRL_W, frameHeight: TR.CTRL_H });
             // One shadow for the whole rig — it never animates, it just rides
             // along under both parts.
-            this.load.image('trencher_shadow', 'graphics/trencher/shadow.png');
+            this.load.image('trencher_shadow', 'graphics/trencher/shadow.webp');
             // The torn lip of ground at the dig line: flat along the bottom (it
             // sits ON the line), ragged along the top, so the cut never reads as
             // a ruled edge. Two versions, alternated while the machine cuts, so
             // the broken edge keeps changing shape instead of sliding along as
             // one fixed silhouette.
-            this.load.image('cut_edge_1', 'graphics/cut-edge/cut-edge1.png');
-            this.load.image('cut_edge_2', 'graphics/cut-edge/cut-edge2.png');
+            const CE0 = (CONFIG.ROAD.TUNNEL || {}).CUT_EDGE || {};
+            if (CE0.FILE) {
+                this.load.spritesheet('cut_edge', CE0.FILE,
+                    { frameWidth: CE0.FRAME_W || 256, frameHeight: CE0.FRAME_H || 32 });
+            }
             // (the side-on trencher icon is gone — it sat beside the battery
             //  slots until the battery case took that row, and the ghost rig
             //  inside the case says the same thing from the machine's own art)
@@ -523,7 +526,7 @@ class GameScene extends Phaser.Scene {
         // The .tmj only carries the grid + tile names; the PNGs live here.
         const TM = CONFIG.ROAD && CONFIG.ROAD.TILEMAP;
         if (TM && TM.ENABLED) {
-            // Every level's map, and the pond art any of them names. Maps are a
+            // Every level's map. Maps are a
             // few KB of JSON, so loading the rotation up front costs nothing and
             // means a level change never waits on a fetch.
             this._levels().forEach((lv, i) => this.load.json(`level_map_${i}`, lv.FILE));
@@ -535,10 +538,6 @@ class GameScene extends Phaser.Scene {
                     `(${file.type}). Check the path is relative to index.html and ` +
                     `that the file is actually served.`);
             });
-            const pondDir = TM.POND_DIR || 'graphics/pond/';
-            for (const name of this._pondArt()) {
-                this.load.image(`pond_${name}`, `${pondDir}${name}.png`);
-            }
             // Every tile sheet the TILESETS table names — 128px frames, dry AND
             // water-filled tiles all in the same sheet. An entry without an IMAGE
             // shares a texture some other entry loads, so nothing is fetched or
@@ -565,10 +564,6 @@ class GameScene extends Phaser.Scene {
             // the first level is on screen.
             // The watering splash: one row of square frames, sliced at the
             // tilemap's own frame size since that is what the art is drawn to.
-            if ((CONFIG.PAUSE || {}).ENABLED !== false) {
-                this.load.image('icon_play',  'graphics/pause/play.png');
-                this.load.image('icon_pause', 'graphics/pause/pause.png');
-            }
             const FR2 = TM.FARMER || {};
             if (FR2.ENABLED !== false) {
                 for (const n of (FR2.CYCLE || [])) {
@@ -751,7 +746,7 @@ console.log(
         }
 
         this._panelBackdrop();
-        this._buildPauseButton();
+        this._buildPauseKey();
         this._buildRoster();
 
         // Endless mode: the landscape camera must ignore every UI/fixed
@@ -1320,8 +1315,6 @@ console.log(
             branchData: layer(TM.BRANCH_LAYER) || [],   // dry branches
             mainData:   layer(TM.MAIN_LAYER)   || [],   // dug main canal
             cropsData:  layer(TM.CROPS_LAYER)  || [],   // crop markers (not drawn)
-            pondData:   layer(TM.POND_LAYER)   || [],   // pond markers (not drawn)
-            pondObjs:   objects(TM.POND_LAYER),         // ...or rectangles, the newer way
             mudObjs:    objects((TM.MUD || {}).LAYER || 'mud'),  // wallows, as rectangles
             // THE BLEED COLUMNS, for anything the game places ITSELF. A phone
             // reads the map without them (see MOBILE_TRIM), so a scattered
@@ -1343,7 +1336,6 @@ console.log(
             // yet would silently mean "no bridges anywhere".
             bridged:    null,                          // filled just below
             markerBase: this._markerBase(map),          // where markers.tsx starts here
-            ponds:      (this._levelDef(levelIndex) || {}).PONDS || {},
             mainLeftCol: mainRightCol - (mainW - 1), mainRightCol, mainW,
         };
         // EVERY TILE THE DECK COVERS is crossable, not just the one its marker
@@ -1442,7 +1434,7 @@ console.log(
         // the name match is exact and a miss is silent.
         const present = (map.layers || []).map((l) => l.name);
         const layers = [TM.GROUND_LAYER, TM.BRANCH_LAYER, TM.MAIN_LAYER,
-                        TM.CROPS_LAYER, TM.POND_LAYER].map((spec) => {
+                        TM.CROPS_LAYER].map((spec) => {
             const alts = Array.isArray(spec) ? spec : [spec];
             const l = alts.map((n) => (map.layers || []).find((x) => x.name === n))
                           .find(Boolean);
@@ -1500,17 +1492,15 @@ console.log(
                 console.warn(`${tag} — ${n} MARKER tile(s) painted on the "${layer}" ` +
                     `layer: marker ${id}${names[id] ? ` ("${names[id]}")` : ''}. Markers ` +
                     `are never drawn, so these do nothing there. A crop marker ` +
-                    `belongs on "${lname(TM.CROPS_LAYER)}", a pond marker on ` +
-                    `"${lname(TM.POND_LAYER)}".`);
+                    `belongs on "${lname(TM.CROPS_LAYER)}".`);
             }
         }
 
-        // What the marker layers are actually carrying, by marker NAME — so a
-        // pond marker painted on the crops layer (or the reverse) is visible
-        // here rather than showing up later as art that never appears.
+        // What the marker layer is actually carrying, by marker NAME — so a
+        // marker that names nothing is visible here rather than showing up later
+        // as art that never appears.
         if (mb !== null && mb !== undefined) {
-            for (const [role, data] of [[lname(TM.CROPS_LAYER), g.cropsData],
-                                        [lname(TM.POND_LAYER),  g.pondData]]) {
+            for (const [role, data] of [[lname(TM.CROPS_LAYER), g.cropsData]]) {
                 const by = new Map();
                 for (const raw of (data || [])) {
                     if (!raw) continue;
@@ -2194,8 +2184,6 @@ console.log(
         // is the lit farm the fence has to be raised — and it did not exist when
         // the light last moved.
         this._focusFenceDepth(this._dimmedSeg);
-        this._buildPonds(seg, band);
-        this._buildPondObjects(seg, band);
         this._buildMud(seg, band);
     }
 
@@ -6033,117 +6021,7 @@ console.log(
         f.waitT = this._rndRange(F.PAUSE_MS || [1800, 6500]);
     }
 
-    // ── Ponds ────────────────────────────────────────────────────────────────
-    // A pond is ONE image, not a tileset: the map marks the cells it covers with
-    // a marker tile, and the block those cells form gives the pond its position
-    // and size. Which pond art a marker stands for is the LEVEL's business — the
-    // same two markers mean different ponds in different levels — so the mapping
-    // lives on the level entry, keyed by the marker's position in markers.tsx.
-    _buildPonds(seg, band) {
-        const g = this.tileGrid;
-        if (!g || !g.pondData.length || g.markerBase === null) return;
-        const gTop = band.bandTop;
 
-        // Group the marked cells: same marker, touching each other, one pond.
-        const seen = new Set();
-        for (let r = 0; r < g.rows; r++) {
-            for (let c = 0; c < g.cols; c++) {
-                const i = r * g.cols + c;
-                if (seen.has(i) || !g.pondData[i]) continue;
-                const gid = g.pondData[i];
-                // Bounding box of this block, found by walking neighbours that
-                // carry the SAME marker — two ponds of different kinds can touch
-                // without merging.
-                let c0 = c, c1 = c, r0 = r, r1 = r;
-                const queue = [i];
-                seen.add(i);
-                while (queue.length) {
-                    const k = queue.pop();
-                    const kc = k % g.cols, kr = (k - kc) / g.cols;
-                    c0 = Math.min(c0, kc); c1 = Math.max(c1, kc);
-                    r0 = Math.min(r0, kr); r1 = Math.max(r1, kr);
-                    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                        const nc = kc + dc, nr = kr + dr;
-                        if (nc < 0 || nc >= g.cols || nr < 0 || nr >= g.rows) continue;
-                        const n = nr * g.cols + nc;
-                        if (seen.has(n) || g.pondData[n] !== gid) continue;
-                        seen.add(n); queue.push(n);
-                    }
-                }
-                // Marker → this level's art. The gid is only ever used here, to
-                // subtract the sheet's base; config never sees it.
-                const art = g.ponds[gid - g.markerBase];
-                this._makePond(seg, art, c0, r0, c1 - c0 + 1, r1 - r0 + 1, gTop);
-            }
-        }
-    }
-
-    // One pond, from a rectangle of cells.
-    //
-    // Both authoring routes end here: a block of painted markers reduced to its
-    // bounding box, or — the way to do it now — a rectangle drawn straight onto
-    // the pond OBJECT layer. The painted version only ever produced a box
-    // anyway, so drawing the box is the same instruction with the middle step
-    // taken out, and the object carries its own art name instead of an index
-    // into a per-level table.
-    _makePond(seg, art, c0, r0, cols, rows, gTop) {
-        const g = this.tileGrid;
-        if (!art || !this.textures.exists(`pond_${art}`)) return;
-        const w = cols * g.tile, h = rows * g.tile;
-        const px = g.left + (c0 * g.tile) + w / 2;
-        const py = gTop + (r0 * g.tile) + h / 2;
-        const c1 = c0 + cols - 1, r1 = r0 + rows - 1;
-        this._addB(this.add.image(px, py, `pond_${art}`)
-            .setDisplaySize(w, h)
-            .setDepth(1.45), seg);          // over the ground, under the canal
-
-        // The filled version sits on top of the dry bed, hidden until the
-        // canal draws level with the pond. It is the SAME rectangle, so
-        // the water lands exactly inside its own banks; only its scale
-        // changes as it fills.
-        const wet = this._pondWaterName(art);
-        if (!this.textures.exists(`pond_${wet}`)) return;
-        const PF = CONFIG.ROAD.TILEMAP.POND_FILL || {};
-        const water = this._addB(this.add.image(px, py, `pond_${wet}`)
-            .setDisplaySize(w, h)
-            .setDepth(PF.DEPTH !== undefined ? PF.DEPTH : 1.46)
-            .setVisible(false), seg);
-        // The dig is measured up from the band's foot, so the pond's
-        // centre row converts to the distance the machine must have cut
-        // before the water starts arriving.
-        const midRow = (r0 + r1) / 2;
-        // The flow art, riding over the water: a couple of copies of the
-        // same picture, each running centre-to-bank a fraction of a cycle
-        // apart, so water is always seen to be arriving.
-        const FL = PF.FLOW || {};
-        const rings = [];
-        const flowKey = `pond_${this._pondFlowName(art)}`;
-        if (FL.ENABLED !== false && this.textures.exists(flowKey)) {
-            for (let n = 0; n < (FL.RINGS || 2); n++) {
-                rings.push(this._addB(this.add.image(px, py, flowKey)
-                    .setDisplaySize(w, h)
-                    .setDepth((PF.DEPTH !== undefined ? PF.DEPTH : 1.46)
-                            + (FL.DEPTH_OFFSET || 0.005))
-                    .setVisible(false), seg));
-            }
-        }
-        (seg.ponds || (seg.ponds = [])).push({
-            water, rings,
-            // A tint MULTIPLIES the art, so the value it ends on is not
-            // the deep colour — it is deep ÷ shallow, per channel. Work
-            // that out once here from the two colours in config, so the
-            // config stays readable: the colour the art was painted at,
-            // and the colour it should reach.
-            tintTo: this._tintRatio(PF.SHALLOW_COLOR, PF.DEEP_COLOR),
-            alphaFrom: PF.ALPHA_FROM !== undefined ? PF.ALPHA_FROM : 1,
-            // Each ring keeps its own phase, staggered around the cycle,
-            // so they can retire one at a time as each finishes its run.
-            ringPhase: rings.map((_, n) => n / Math.max(1, rings.length)),
-            filling: false, done: false, spent: false,
-            sx: water.scaleX, sy: water.scaleY,          // full size
-            startPx: (g.rows - midRow - 0.5) * g.tile,
-        });
-    }
 
     // MUD, from rectangles named `mud` on the mud object layer.
     //
@@ -6197,138 +6075,7 @@ console.log(
         }
     }
 
-    // Ponds drawn as RECTANGLES on the pond object layer.
-    //
-    // The object's name picks the art — `pond2` draws pond2, a plain `pond`
-    // takes the first entry of POND_ART — so a pond declares its own look in the
-    // map, the way a bridge or a cow marker does, and needs no entry in
-    // levels.js at all.
-    _buildPondObjects(seg, band) {
-        const TM = CONFIG.ROAD.TILEMAP, g = this.tileGrid;
-        if (!g || !g.pondObjs || !g.pondObjs.length) return;
-        const dry  = (TM.POND_FILL || {}).DRY_SUFFIX || '_dry';
-        const dflt = (TM.POND_ART || [])[0] || 'pond1';
-        for (const o of g.pondObjs) {
-            // A POINT is not a pond. Rectangles carry a size; stray points left
-            // on the layer report zero for both and are skipped rather than
-            // drawn as a pond of no width.
-            if (!(o.w > 0) || !(o.h > 0)) continue;
-            const base = (o.name === TM.POND_LAYER || o.name === 'pond') ? dflt : o.name;
-            const art  = String(base).endsWith(dry) ? String(base) : base + dry;
-            // Snapped to whole cells: the pond sits in the grid like everything
-            // else, so a rectangle dragged a few pixels off still lands square.
-            const c0 = Math.round(o.col), r0 = Math.round(o.row);
-            this._makePond(seg, art, c0, r0,
-                Math.max(1, Math.round(o.w)), Math.max(1, Math.round(o.h)), band.bandTop);
-        }
-    }
 
-    // ── Filling a pond ───────────────────────────────────────────────────────
-    // Once the trench draws level with a pond, its water appears at the centre
-    // and spreads outward until it meets the banks — one continuous motion, not
-    // steps.
-    //
-    // The curve is the physics rather than an easing preset. Water arrives at a
-    // steady rate, so it is the AREA that grows evenly; the edge therefore has to
-    // travel fast at first and slow as it goes, because each further ring of
-    // shoreline is bigger than the last and takes longer to cover. Tweening the
-    // area and taking its square root for the scale gives exactly that, and it is
-    // why a bounce felt wrong — an overshoot means water piling up past the bank
-    // and coming back, which is not what a filling basin does.
-    //
-    // Over the top of it, the flow art runs outward from the centre on a loop —
-    // water still arriving. Each ring carries its OWN phase, so when the pond
-    // fills the rings already travelling are allowed to finish their journey and
-    // simply are not sent out again. Cutting one off halfway would be a wave
-    // stopping in open water.
-    _updatePonds(tn, dt) {
-        const seg = tn.seg;
-        if (!seg || !seg.ponds) return;
-        const PF = CONFIG.ROAD.TILEMAP.POND_FILL || {};
-        const FL = PF.FLOW || {};
-        for (const p of seg.ponds) {
-            if (!p.filling) {
-                if (tn.progressPx < p.startPx) continue;      // not level yet
-                p.filling = true;
-                const from = PF.START !== undefined ? PF.START : 0.1;
-                p.water.setVisible(true).setScale(p.sx * from, p.sy * from)
-                       .setAlpha(p.alphaFrom);
-                // Tween the area from its starting share to full; the sprite's
-                // scale is the root of it, every frame.
-                const area = { v: from * from };
-                this.tweens.add({
-                    targets: area, v: 1,
-                    duration: PF.FILL_MS || 10000,
-                    // Thin water runs across a bed easily, so the pool covers most
-                    // of the floor at a steady clip; after that the banks are
-                    // already met and the water has nowhere to go but UP, so the
-                    // last of the area comes slowly while the depth builds. Hence
-                    // a constant rate to AREA_KNEE, then a decelerating tail.
-                    //
-                    // The knee's TIME is derived, not set: it is placed where the
-                    // tail's opening speed equals the constant rate, so the change
-                    // of pace has no jolt in it — the water eases off rather than
-                    // hitting a wall.
-                    ease: this._pondFillEase(PF),
-                    onUpdate: () => {
-                        const k = Math.sqrt(area.v);
-                        p.water.setScale(p.sx * k, p.sy * k);
-                        // Shallow to deep. The art is painted at its SHALLOW
-                        // colour, because a tint can only ever darken — so the
-                        // pond starts untinted and is multiplied down toward
-                        // DEEP_COLOR as it fills. Red falls fastest of the three,
-                        // which is what depth does to light: the warmth a shallow
-                        // pond borrows from its bed is the first thing to go.
-                        // Absorption is exponential, so the shift is quick early
-                        // and asymptotic late — it settles as the spread does.
-                        if (p.tintTo) {
-                            const t = 1 - Math.exp(-(PF.TINT_RATE || 3) * area.v);
-                            p.water.setTint(this._lerpColor(0xffffff, p.tintTo, t));
-                        }
-                        // Thin water is see-through, so the bed shows at first and
-                        // is buried as the pond deepens. Ease-out: most of the
-                        // opacity is gained early, then it creeps — the same shape
-                        // as light being absorbed, and it means the pond stops
-                        // visibly changing well before the spread ends.
-                        if (p.alphaFrom < 1) {
-                            const e = 1 - Math.pow(1 - area.v, PF.ALPHA_POWER || 3);
-                            p.water.setAlpha(p.alphaFrom + (1 - p.alphaFrom) * e);
-                        }
-                    },
-                    onComplete: () => { p.done = true; },
-                });
-            }
-            if (!p.rings || !p.rings.length || p.spent) continue;
-
-            // The rings ride the water's CURRENT extent, so they always run out
-            // to wherever the shoreline has reached and never overshoot it.
-            const reach = p.water.scaleX / p.sx;
-            const cycle = (FL.CYCLE_MS || 1600) / 1000;
-            const from  = FL.START !== undefined ? FL.START : 0.05;
-            const peak  = FL.ALPHA !== undefined ? FL.ALPHA : 0.5;
-            let alive = 0;
-            p.rings.forEach((r, i) => {
-                let ph = p.ringPhase[i];
-                if (ph < 0) return;                           // this one has landed
-                ph += dt / cycle;
-                if (ph >= 1) {
-                    // Reached the bank. Send it out again unless the pond has
-                    // finished filling, in which case this was its last run.
-                    if (p.done) { p.ringPhase[i] = -1; r.setVisible(false); return; }
-                    ph -= 1;
-                }
-                p.ringPhase[i] = ph;
-                alive++;
-                r.setVisible(true)
-                 .setScale(p.sx * reach * (from + (1 - from) * ph), 
-                           p.sy * reach * (from + (1 - from) * ph))
-                 // Swells on the way out and is spent by the time it arrives — a
-                 // ring that simply vanished at the edge would read as a hoop.
-                 .setAlpha(peak * Math.sin(Math.PI * ph));
-            });
-            if (!alive) p.spent = true;                       // still water from here
-        }
-    }
 
     // A stable pseudo-random value in [0,1) for a cell, per `salt`. Same cell,
     // same number, every rebuild — which is the point: the scene restarts on
@@ -6363,41 +6110,8 @@ console.log(
         return ls.length ? this.cache.json.get(`level_map_${index % ls.length}`) : null;
     }
 
-    // Every pond image any level names, plus its water twin: a level maps a
-    // marker to the DRY art, and the filled version is the same name with
-    // _water in place of _dry. One name in config, two files.
-    _pondArt() {
-        const TM = CONFIG.ROAD.TILEMAP || {};
-        const out = new Set();
-        const add = (name) => {
-            if (!name) return;
-            const dry = String(name).endsWith(TM.POND_FILL && TM.POND_FILL.DRY_SUFFIX || '_dry')
-                      ? String(name)
-                      : String(name) + ((TM.POND_FILL || {}).DRY_SUFFIX || '_dry');
-            out.add(dry);
-            out.add(this._pondWaterName(dry));
-            out.add(this._pondFlowName(dry));
-        };
-        // The set declared in config — an object layer names its art inside the
-        // MAP, so the loader cannot learn it from levels.js alone.
-        for (const name of (TM.POND_ART || [])) add(name);
-        // ...and whatever the tile-marker levels still name themselves.
-        for (const lv of this._levels()) {
-            for (const name of Object.values(lv.PONDS || {})) add(name);
-        }
-        return [...out];
-    }
 
-    _pondWaterName(dryName) {
-        const P = CONFIG.ROAD.TILEMAP.POND_FILL || {};
-        return String(dryName).replace(P.DRY_SUFFIX || '_dry', P.WATER_SUFFIX || '_water');
-    }
 
-    _pondFlowName(dryName) {
-        const P = CONFIG.ROAD.TILEMAP.POND_FILL || {};
-        const F = P.FLOW || {};
-        return String(dryName).replace(P.DRY_SUFFIX || '_dry', F.SUFFIX || '_flow');
-    }
 
     // Where the marker sheet starts in THIS map. Markers mean what they mean by
     // position in that sheet, so the gid a marker happens to have — which moves
@@ -7372,7 +7086,6 @@ console.log(
         // from the machine's update: branches keep filling long after the dig
         // finished, and this runs for every segment until they do.
         // Ponds fill on the same schedule, for the same reason.
-        this._updatePonds(tn, dt);
         // Smooth continuous speed — the branches flow at the main canal's pace.
         const speed = (CONFIG.ROAD.TILEMAP.FLOW_SPEED || CONFIG.ROAD.WATER.MIN_SPEED || 30)
                     * this.layoutConfig.platformScale;
@@ -7940,10 +7653,13 @@ console.log(
         // ground still to be dug. Spans the main canal's full width.
         const CE = TN.CUT_EDGE || {};
         let cutEdge = null;
-        if (CE.ENABLED !== false && this.textures.exists('cut_edge_1')) {
+        if (CE.ENABLED !== false && this.textures.exists('cut_edge')) {
             const tile = this.tileGrid ? this.tileGrid.tile
                        : r.canalW / (CONFIG.ROAD.TILEMAP.MAIN_TILES || 2);
-            const src  = this.textures.get('cut_edge_1').getSourceImage();
+            // THE FRAME's proportions, not the image's. The sheet is two shapes
+            // stacked, so its own height is twice a lip's and the fallback aspect
+            // below would draw the edge at double thickness.
+            const src  = this.textures.getFrame('cut_edge', 0);
             const ew   = tile * (CE.WIDTH_TILES !== undefined ? CE.WIDTH_TILES : 2);
             // Height is its OWN number, not the width's aspect: narrowing the lip
             // should not also flatten it out of existence. Unset falls back to the
@@ -7951,7 +7667,7 @@ console.log(
             const eh   = CE.HEIGHT_TILES !== undefined
                        ? tile * CE.HEIGHT_TILES
                        : ew * (src.height / src.width);
-            cutEdge = this._addB(this.add.image(band.cx, entryY, 'cut_edge_1')
+            cutEdge = this._addB(this.add.image(band.cx, entryY, 'cut_edge', 0)
                 .setDisplaySize(ew, eh)
                 .setOrigin(0.5, 1)                       // its foot rides the line
                 .setAlpha(CE.ALPHA !== undefined ? CE.ALPHA : 1)
@@ -8738,7 +8454,7 @@ console.log(
             const n = Math.floor(time / swap) & 1;
             if (n !== b.edgeFrame) {
                 b.edgeFrame = n;
-                b.cutEdge.setTexture(n ? 'cut_edge_2' : 'cut_edge_1');
+                b.cutEdge.setFrame(n);
             }
         }
         this._setTrencherRunning(tn, true, step > 0.01);
@@ -9732,40 +9448,24 @@ console.log(
     // catch is that a zero-scroll object's coordinates are measured from the
     // CAMERA VIEWPORT's edge, not the screen's — so x starts at 0 at the left of
     // the farm half.
-    _buildPauseButton() {
+    // THE PAUSE KEY. No button — see CONFIG.PAUSE for why.
+    //
+    // Bound to the physical key rather than the character it types, so it lands
+    // in the same place on a keyboard that puts a different symbol there.
+    _buildPauseKey() {
         const P = CONFIG.PAUSE || {};
-        if (P.ENABLED === false || !this.textures.exists('icon_pause')) return;
-        const s = this.layoutConfig.scale, B = this.layoutConfig.partB;
-        const size = Math.max(18, (P.SIZE || 44) * s);
-        const m    = (P.MARGIN || 16) * s;
         this.gamePaused = false;
-        this.pauseBtn = this._addB(this.add.image(
-                B.width - m - size / 2, m + size / 2, 'icon_pause')
-            .setDisplaySize(size, size)
-            .setScrollFactor(0)
-            .setAlpha(P.ALPHA !== undefined ? P.ALPHA : 0.85)
-            .setDepth(P.DEPTH !== undefined ? P.DEPTH : 100000)
-            , null);
-
-        // Hit-tested from the SCENE, not by making the image interactive.
-        //
-        // An interactive object drawn by a non-default camera has to be matched
-        // to that camera by the input system, and its hit area is re-derived
-        // whenever the texture changes — which this button does on every press.
-        // Between them the first click landed and the second did not. A plain
-        // rectangle test against the pointer has no such moving parts.
-        //
-        // The button hangs off camB with a zero scroll factor, so its position on
-        // SCREEN is that camera's corner plus its own — worked out once here.
-        const pad = size * 0.45;                 // generous: small icon, big thumb
-        this.pauseHit = new Phaser.Geom.Rectangle(
-            this.camB ? this.camB.x + this.pauseBtn.x - size / 2 - pad : this.pauseBtn.x,
-            this.camB ? this.camB.y + this.pauseBtn.y - size / 2 - pad : this.pauseBtn.y,
-            size + pad * 2, size + pad * 2);
-        this.input.on('pointerdown', (p) => {
-            if (this.pauseHit && this.pauseHit.contains(p.x, p.y)) {
-                this._setPaused(!this.gamePaused);
-            }
+        if (P.ENABLED === false || !this.input || !this.input.keyboard) return;
+        const code = Phaser.Input.Keyboard.KeyCodes[P.KEY || 'BACKTICK'];
+        if (code === undefined) {
+            console.warn(`[pause] no such key "${P.KEY}" — pause is unbound`);
+            return;
+        }
+        this.input.keyboard.on('keydown', (e) => {
+            // Only the bare key. Held with a modifier it belongs to the browser
+            // or the operating system, and stealing it there would be rude.
+            if (e.keyCode !== code || e.ctrlKey || e.metaKey || e.altKey) return;
+            this._setPaused(!this.gamePaused);
         });
     }
 
@@ -9798,29 +9498,10 @@ console.log(
             }
         }
 
-        // The icon shows what pressing it will DO, not what the game is doing.
-        if (this.pauseBtn) this.pauseBtn.setTexture(on ? 'icon_play' : 'icon_pause');
-
         // A frozen machine should look stopped, not caught mid-stride.
         if (on && this.tunnel) this._setTrencherRunning(this.tunnel, false, false);
     }
 
-    // ── Color lerp helper ────────────────────────────────────────────────────
-    // The fill curve for a pond: a constant spread across the bed, then a slow
-    // tail as the water starts gaining depth instead of ground. See the comment
-    // at the call site for why the knee's position in TIME is computed from its
-    // position in AREA rather than being a second number to tune.
-    _pondFillEase(PF) {
-        const k = PF.AREA_KNEE !== undefined ? PF.AREA_KNEE : 0.8;   // area at the knee
-        const p = PF.TAIL_POWER || 2;                                // how hard the tail slows
-        if (k <= 0 || k >= 1) return 'Linear';
-        const f = k / (k + p * (1 - k));      // the knee's moment: slopes match here
-        return (t) => {
-            if (t <= f) return k * (t / f);                          // steady spread
-            const u = (t - f) / (1 - f);
-            return k + (1 - k) * (1 - Math.pow(1 - u, p));           // gaining depth
-        };
-    }
 
     // The tint that turns `from` into `to` when multiplied over it. Any channel
     // that would need to brighten is clamped — a tint cannot lighten, so if this

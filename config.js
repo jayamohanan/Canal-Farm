@@ -59,12 +59,24 @@ var CONFIG = {
     // Play / pause, top-right of the screen. The icon shows what pressing it
     // will DO — a pause bar while running, a play arrow while stopped — which is
     // the convention every media player uses.
+    // ── PAUSE ─────────────────────────────────────────────────────────────────
+    // A DEVELOPMENT TOOL, not a player feature — it freezes the world so a
+    // moment can be looked at. There is no button for it: an icon sitting in the
+    // corner of a casual game invites a tap, and a player who pauses by accident
+    // and cannot see why nothing moves has been given a bug.
+    //
+    // KEY is the physical key that toggles it, by Phaser's name. The backtick is
+    // the usual choice for a hidden toggle and is a good one here: it is the
+    // games industry's console key, it carries no browser shortcut, and nothing
+    // in this game reads the keyboard at all — so there is no combination it can
+    // interrupt. Avoid anything the browser owns (F5, F11, F12, Escape, and most
+    // Ctrl or Cmd pairs) and anything a player might lean on (space, arrows).
+    //
+    // Keyboard only, so it does not exist on a phone. That is the right side of
+    // the trade for a tool nobody but you should find.
     PAUSE: {
         ENABLED: true,
-        SIZE:    44,        // px @ design scale
-        MARGIN:  16,        // from the screen's top-right corner, px @ design
-        ALPHA:   0.85,
-        DEPTH:   100000,    // above everything, including the debug grid
+        KEY:     'BACKTICK',
     },
 
     RESET_PROGRESS: false,
@@ -525,7 +537,7 @@ var CONFIG = {
         FILLED_BG_COLOR: "#eaf0f6",
         INSET_SHADOW_COLOR: "#364549",
         INSET_BORDER_WIDTH: 3.5,
-        // Grain over the flat cell colour. ui/merge-grid/cell_noise.png is neutral
+        // Grain over the flat cell colour. ui/merge-grid/cell_noise.webp is neutral
         // grey with blurred noise, blended over the fill when the cell faces are
         // baked — so this is the same composite you would build in an image
         // editor, except the colour underneath stays a config value and one
@@ -887,7 +899,7 @@ var CONFIG = {
             // ── THE LEVEL ROTATION — edit this list ───────────────────────
             // One entry per level, in PLAY ORDER; the run loops at the end.
             // FILE is the Tiled map. Anything else on the entry is that level's
-            // own data — see PONDS below.
+            // own data — its crops, its ranch, its cost.
             //
             // Maps may have different row counts. A band is always the full
             // height of the farm half; a map with fewer rows is anchored to the
@@ -1092,7 +1104,7 @@ var CONFIG = {
                     // The chicken block's building. Well under the barn on
                     // purpose: the size difference is most of what says one
                     // holds cattle and the other holds birds.
-                    coop:             { FILE: 'graphics/animals/chicken/coop.png', SIZE: 1.4, ORIGIN: [0.5, 1] },
+                    coop:             { FILE: 'graphics/animals/chicken/coop.webp', SIZE: 1.4, ORIGIN: [0.5, 1] },
                     // Where the fleece comes off. SIZE is the HEIGHT, and this
                     // art is WIDER than it is tall (290x258) where the barn is
                     // taller than wide — so matching the barn's number would
@@ -1144,23 +1156,6 @@ var CONFIG = {
                     cow_w: { SPECIES: 'cow', FACING: 'w', ORIGIN: [0,   1], FACE: [-1,  0] },
                 },
             },
-            POND_LAYER: 'pond',            // the ponds' layer. Read BOTH ways: as an
-                                           // OBJECT layer of rectangles (the way
-                                           // props and ranches are authored), and
-                                           // as a tile layer of painted markers
-                                           // (how ponds were done first). A map
-                                           // may use either; objects are the way
-                                           // to author a new one
-            // WHICH ART A POND USES. An object's NAME picks it — a rectangle
-            // called `pond2` draws pond2 — and a plain `pond` takes the first
-            // entry here. The names are the DRY art; the water and flow versions
-            // are derived from it by suffix, so one name gives all three.
-            //
-            // Everything listed is loaded, because an object layer names its art
-            // inside the MAP and the loader would otherwise have to parse every
-            // level to find out what to fetch. Six 256px files is 1.2MB of
-            // texture, which is not worth a scan.
-            POND_ART: ['pond1', 'pond2'],
 
             // ── MUD ─────────────────────────────────────────────────────────
             // Drawn wherever a rectangle named `mud` sits on the map's `mud`
@@ -1184,78 +1179,7 @@ var CONFIG = {
                 DEPTH:   1.45,     // on the ground and the soil overlays (1.40-1.44),
                                    // under the dry branch canals (1.5)
             },
-            POND_DIR:   'graphics/pond/',  // where the pond art lives
 
-            // ── Filling a pond ───────────────────────────────────────────
-            // A level names the DRY art (PONDS above); the filled version is the
-            // same file with WATER_SUFFIX in place of DRY_SUFFIX, so one name
-            // covers both. The water appears when the trench draws level with
-            // the pond's middle row, starts at START of full size and grows one
-            // step per STEP_MS until it fills the bed.
-            POND_FILL: {
-                DRY_SUFFIX:   '_dry',
-                WATER_SUFFIX: '_water',
-                START:    0.1,     // size it appears at, as a fraction of full
-                FILL_MS:  10000,   // centre to banks, one continuous spread
-                // The water arrives at a steady rate, so the AREA grows evenly
-                // and the shoreline is its square root — fast at first, slowing
-                // as each further ring of bank takes longer to reach. That is
-                // what makes it read as water rather than a growing picture, and
-                // why there is no bounce here: an overshoot would be the pond
-                // spilling past its banks and sucking back.
-                // The inflow's shape. Thin water spreads across the bed easily,
-                // so the area grows at a steady rate up to AREA_KNEE; past that
-                // the banks are met and further water adds DEPTH rather than
-                // ground, so the last of the area arrives slowly.
-                AREA_KNEE:  0.8,      // area covered before it starts to slow
-                TAIL_POWER: 2,        // how hard the tail slows (2 = quadratic).
-                                      // The knee's moment in time is derived from
-                                      // these two so the pace changes smoothly —
-                                      // there is no third number to keep in sync
-
-                // Shallow to deep. SHALLOW_COLOR is the colour the water ART is
-                // painted at — a tint can only darken, so the art has to start
-                // as the lightest state it will ever have. The code multiplies it
-                // down toward DEEP_COLOR as the pond fills; red falls fastest,
-                // which is what depth does to light.
-                SHALLOW_COLOR: '#85C0B2',   // what pondN_water.png was exported at
-                DEEP_COLOR:    '#2B8C9E',   // where it lands, full
-                TINT_RATE:     3,     // how sharply it gets there. Absorption is
-                                      // exponential, so the shift is quick early
-                                      // and asymptotic late — higher = deep sooner
-
-                // Thin water is see-through: the bed shows through the first
-                // shallow spread and is buried as the pond deepens. Ease-out, so
-                // most of the opacity arrives early and the last of it creeps —
-                // the pond has settled visually before it stops spreading.
-                ALPHA_FROM:  0.05,    // opacity when the water first appears
-                ALPHA_POWER: 3,       // 1 = linear, 3 = ease-out cubic, higher =
-                                      // opaque sooner
-                DEPTH:    1.46,    // on the dry bed (1.45), under the canal
-
-                // ── The flow over it ─────────────────────────────────────
-                // <pond>_flow.png, run outward from the centre on a loop while
-                // the pond is filling: water still arriving. Greyscale art, so
-                // it takes the water's colour. It stops when the pond is full —
-                // a still pond should be still.
-                FLOW: {
-                    ENABLED:  true,
-                    SUFFIX:   '_flow',
-                    RINGS:    2,       // copies, evenly spread around the cycle,
-                                       // so one leaves the centre as another
-                                       // reaches the bank
-                    CYCLE_MS: 3200,    // centre to bank, one ring
-                    START:    0.05,    // size it leaves the centre at
-                    ALPHA:    0.5,     // at mid-journey; it swells from nothing
-                                       // and is spent by the time it arrives
-                                       // Once the pond is full, rings already on
-                                       // their way finish the journey and are not
-                                       // sent out again — their own alpha curve
-                                       // takes them to nothing at the bank, so
-                                       // nothing is ever cut off mid-water.
-                    DEPTH_OFFSET: 0.005,   // just over the water
-                },
-            },
             SHEET:   'graphics/tilesheets/canals.webp',
 
             // ── Which Tiled tileset is which texture ──────────────────────
@@ -1640,7 +1564,7 @@ var CONFIG = {
                     ENABLED: true,
                     LAYER:   'burrow',
                     NAME:    'burrow',
-                    FILE:    'graphics/animals/bunny/burrow.png',
+                    FILE:    'graphics/animals/bunny/burrow.webp',
                     SIZE:    0.9,       // tiles tall; width follows the art
                     // A HOLE IN THE GROUND, so it sits in the ground band and
                     // not among the actors: a flat mark on the earth that
@@ -1699,7 +1623,7 @@ var CONFIG = {
                         // 0.68 lays it out just under a tile across, about as
                         // wide as the sheep it came off. Any taller and a fleece
                         // starts reading as a second animal.
-                        PRODUCE: { NAME: 'fleece', FILE: 'graphics/animals/sheep/fleece.png',
+                        PRODUCE: { NAME: 'fleece', FILE: 'graphics/animals/sheep/fleece.webp',
                                    SIZE: 0.68 },
                         SHEETS: {
                             ns: { FILE: 'graphics/animals/sheep/sheep_ns.webp', FRAME_W: 48, FRAME_H: 64 },
@@ -1745,7 +1669,7 @@ var CONFIG = {
                         // beside a hen is right and unreadable — 17px lost among
                         // a hundred corn plants. Produce has to be findable, and
                         // the player is looking for it.
-                        PRODUCE: { NAME: 'egg', FILE: 'graphics/animals/chicken/egg.png',
+                        PRODUCE: { NAME: 'egg', FILE: 'graphics/animals/chicken/egg.webp',
                                    SIZE: 0.68 },
                         SHEETS: {
                             e: { FILE: 'graphics/animals/chicken/chicken_e.webp', FRAME_W: 100, FRAME_H: 100 },
@@ -1786,7 +1710,7 @@ var CONFIG = {
                         // because a churn and an egg are nothing alike: one is
                         // nearly as tall as the cow that made it, the other sits
                         // under a hen. Only the TIMING is shared (PRODUCE above).
-                        PRODUCE: { NAME: 'churn', FILE: 'graphics/animals/cow/churn.png',
+                        PRODUCE: { NAME: 'churn', FILE: 'graphics/animals/cow/churn.webp',
                                    SIZE: 0.93 },
                         SHEETS: {
                             ns: { FILE: 'graphics/animals/cow/cow_ns.webp', FRAME_W: 57,  FRAME_H: 114 },
@@ -2236,7 +2160,7 @@ var CONFIG = {
                 // `block` points on the props layer. Those markers can stay
                 // painted in the maps either way; they are simply not read.
                 ENABLED: true,
-                FILE:  'graphics/block.png',
+                FILE:  'graphics/block.webp',
                 // Which point ON THE ART lands on the level boundary. Not the
                 // centre: the wall's waterline sits high in the image, so this
                 // is the pivot that puts the line where the water is actually
@@ -3478,6 +3402,14 @@ var CONFIG = {
             // the machine's whole position is measured from.
             CUT_EDGE: {
                 ENABLED: true,
+                // ONE SHEET, two shapes stacked: the top frame is the lip the
+                // blade leaves on one beat, the bottom the other. They were two
+                // files and are swapped several times a second, so they were the
+                // clearest case in the game for a texture the renderer never has
+                // to rebind — the swap is now a frame change, not a texture one.
+                FILE:    'graphics/cut_edge/cut_edge.webp',
+                FRAME_W: 256,
+                FRAME_H: 32,
                 SWAP_MS: 125,       // how often the lip changes shape WHILE the
                                     // machine is cutting. It freezes on its last
                                     // shape the moment the machine stops, so a
@@ -3538,7 +3470,7 @@ var CONFIG = {
                                    //  measured from the reveal line either way)
 
                 // ── Shadow ────────────────────────────────────────────────
-                // graphics/trencher/shadow.png is ONE shadow for the whole rig,
+                // graphics/trencher/shadow.webp is ONE shadow for the whole rig,
                 // authored in the same source-px space as the two parts, so it
                 // needs no size of its own — it rides the same ratio as
                 // everything else. It never animates; it just travels with the

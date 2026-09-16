@@ -53,11 +53,9 @@
 //          water reaches the cell it stands on, so the herd fills in behind the
 //          flood. The species is a block in ANIMALS.SPECIES (config.js).
 //   COST   optional: work to cut this level, overriding COST[] by position
-//   PONDS  optional: marker id -> pond art, for maps painting pond markers
 //
 // The key names are the ones the code already reads, so binding the crop in
-// costs nothing elsewhere — map loading, pond art and the debug report are
-// untouched.
+// costs nothing elsewhere — map loading and the debug report are untouched.
 //
 // Loaded BEFORE config.js (see index.html), which reads LEVEL_DATA below.
 // ============================================================================
@@ -76,6 +74,7 @@ const LEVEL_DATA = {
         // the ones before it grew, plus its own. The last one named is the new
         // one, and the one that reaches the roster.
 
+
         //vegetable levels
         { FILE: 'maps/levels/vegetable/vegetable_01.tmj', CROPS: { 1: 'tomato' } },
         { FILE: 'maps/levels/vegetable/vegetable_02.tmj', CROPS: { 1: 'tomato', 2: 'potato' } },
@@ -84,9 +83,13 @@ const LEVEL_DATA = {
         { FILE: 'maps/levels/vegetable/vegetable_05.tmj', CROPS: {1: 'tomato', 2: 'potato', 3: 'egg-plant', 4: 'green-beans', 5: 'melon' } },
 
         //livestock levels
-        { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
+       
         { FILE: 'maps/levels/livestock/livestock_cow.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'cow',} },
+        { FILE: 'maps/levels/livestock/livestock_chicken.tmj', CROPS: { 1: 'corn' }, RANCH: { SPECIES: 'chicken', COUNT:100} },
+        { FILE: 'maps/levels/livestock/livestock_bunny.tmj', CROPS: { 1: 'carrot' }, RANCH: { SPECIES: 'bunny', COUNT:30} },
+        { FILE: 'maps/levels/livestock/livestock_sheep.tmj', CROPS: { 1: 'grass' }, RANCH: { SPECIES: 'sheep', COUNT:30} },
         { FILE: 'maps/levels/livestock/livestock_pig.tmj', CROPS: { 1: 'potato' }, RANCH: { SPECIES: 'pig', COUNT:30} },
+
 
         //orchard levels
         { FILE: 'maps/levels/orchard/orchard_01.tmj', CROPS: { 1: 'mango' } },
@@ -97,9 +100,6 @@ const LEVEL_DATA = {
         
         // An animal farm — nothing to draw on the map, just:
         //   { FILE: '…', CROP: 'grass', RANCH: { SPECIES: 'cow', COUNT: 8 } },
-        // Unused sheets, ready to pair: melon, potato, grape.
-        // A level that paints pond markers names its art here:
-        //   { FILE: '…', CROP: 'melon', PONDS: { 1: 'pond1_dry' } },
     ],
 
     // ── CROP LIBRARY ────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ const LEVEL_DATA = {
     //   (unset)  normal — last frame is the fruit, drawn over the final body
     CROP_LIBRARY: {
         DIR: 'graphics/crops/',
-        EXT: '.png',
+        EXT: '.webp',
         CLASS: {
             'hops':        'trellis',
             'green-beans': 'trellis',
