@@ -115,10 +115,6 @@ var CONFIG = {
     BATTERY_START_LEVEL: 10,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
-    // BACKGROUND: {
-    //     GRADIENT_START_COLOR: "#79d288",
-    //     GRADIENT_END_COLOR: "#79d288",
-    // },
      BACKGROUND: {
         GRADIENT_START_COLOR: "#B6915c",
         GRADIENT_END_COLOR: "#B6915c",
@@ -451,49 +447,6 @@ var CONFIG = {
         DEPTH:       99000,  // over the world, under the pause button
     },
 
-    // ── Task list ─────────────────────────────────────────────────────────────
-    // Every field is a job with a name and a number. A small list sits at the top
-    // left of the FARM half showing two of them: the one being dug, and the one
-    // after it greyed out. Finishing a field ticks its row, drops it, promotes the
-    // next one and brings a fresh one in below — so the player always sees where
-    // they are and what is coming, and the level ending gets a beat of its own
-    // before the camera moves on.
-    TASKS: {
-        ENABLED: false,            // hidden for now — the panel, the tick and the
-                                   // list shuffle all still work, they just are
-                                   // not built. Flip to true to bring it back
-                                   // (the level's ending beat comes back with it)
-        TOTAL:   65,               // shown as "1/65"; the run's length
-        NAMES: [
-            "Jenny's Tomatoes", 'Golden Grove', 'Grape Grove', 'Redberry Farm',
-            'Crimson Fields', 'Mango Haven', 'Vine Valley',
-        ],
-        FALLBACK: '<no name>',     // past the end of NAMES
-
-        // Geometry, px at design scale (they ride the layout's uniform scale).
-        PAD:      14,              // inset from the farm half's top-left corner
-        WIDTH:    250,             // panel width
-        ROW_H:    36,
-        COUNT_W:  52,              // the "1/65" column
-        COUNT_SIZE: 15,
-        NAME_SIZE:  17,
-        TICK_R:   11,              // tick ring radius
-        TICK_W:   2.5,             // ring thickness
-
-        BG_COLOR:  '#14200f',
-        BG_ALPHA:  0.42,
-        BG_RADIUS: 10,
-        TEXT_COLOR: '#ffffff',
-        DIM_ALPHA: 0.45,           // the not-yet-started row
-        DONE_COLOR: '#8ce87a',     // ring + check once the field is finished
-
-        // The ending beat, in order.
-        TICK_MS:  420,             // the check springing in
-        HOLD_MS:  320,             // beat before the list moves
-        SHIFT_MS: 380,             // row leaving / promoting / new row arriving
-        DEPTH:    20,              // over everything in the field
-    },
-
     BUTTON: {
         SPAWN_WIDTH: 250,
         SPAWN_HEIGHT: 90,
@@ -533,26 +486,6 @@ var CONFIG = {
         // cells, so it may run into the button: that is fine, the button is
         // drawn at a far higher depth and covers it.
         PANEL_DROP: 30,                // px @ design scale
-    },
-
-    BATTERY_UNLOCK_DISPLAY: {
-        DISPLAY_CROWN_PANEL: false,    // OFF — the crown + battery-name line above
-                                       // the grid is gone. Everything below still
-                                       // works if it is ever wanted back
-        SHOW_CROWN_ICON: true,
-        SHOW_BATTERY_ICON: false,
-        CROWN_ICON_SIZE: 32,
-        BATTERY_ICON_SIZE: 32,
-        TEXT_SIZE: '24px',
-        // TEXT_COLOR: '#FFD700',
-        TEXT_COLOR: '#000000',
-        // TEXT_STROKE_COLOR: '#8B4513',
-        TEXT_STROKE_COLOR: '#000000',
-        TEXT_STROKE_THICKNESS: 0,
-        CROWN_BATTERY_SPACING: 10,
-        BATTERY_TEXT_SPACING: 5,
-        VERTICAL_OFFSET: 20,
-        PADDING_FROM_LEFT: 10,
     },
 
     COIN_COUNTER: {
@@ -757,7 +690,6 @@ var CONFIG = {
                                        // every slot-derived size is measured in
         SLOT_RADIUS: 15,               // corner radius (px)
         CHARGE_RATE_GAP: 10,           // gap (px) between charge-rate label bottom and slot top
-        CHARGE_RATE_BOLT_SIZE: 18,     // bolt icon display size (px)
 
         BATTERY_CASE: {
             ENABLED: true,
@@ -835,13 +767,6 @@ var CONFIG = {
             COLOR:    '#ffffff',
             STROKE:   '#3a2a00',
             STROKE_W: 3,
-            // NO BOLT ON EACH SLOT. Three of them beside three numbers said the
-            // same word three times, and the icon is not what distinguishes one
-            // battery's rate from another's — the number is. It belongs on the
-            // SUM instead, where it names the figure that matters and appears
-            // once.
-            BOLT: false,
-            BOLT_TINT: 0xffffff,   // as above — multiplies, so white is 'as drawn'
         },
         SLOT_LABEL_W: 46,              // width reserved for a charge-rate label
                                        // (px @ design). PORTRAIT ONLY: the
@@ -2279,11 +2204,11 @@ var CONFIG = {
             },
 
             // ── Terrain sheet ───────────────────────────────────────────────
-            // Everything that is NOT a canal piece: the plain ground, the flat
-            // water the flow head is drawn from, and the two growth overlays.
+            // Everything that is NOT a canal piece: the plain ground and the
+            // worked soil.
             // The canal sheet now carries only canal tiles (gid <= 53); nothing
-            // reads past that. The sheet is 768x640 = 6 columns x 5 rows of
-            // 128px frames, so a frame index is (row-1) * 6 + (col-1) and each
+            // reads past that. The sheet is 6 columns x 5 rows of TILEMAP.FRAME
+            // frames, so a frame index is (row-1) * 6 + (col-1) and each
             // ROW after the first is exactly the six edge variants one layer
             // needs, in the CROP_OVERLAY_EDGES order: inner, n, ne, ns, nes,
             // nesw — everything else reached by rotating those.
@@ -2291,8 +2216,8 @@ var CONFIG = {
             //   row 1  the plain ground, and the flat water
             //   row 2  TILLED soil, dry      — the worked patch a seed sits in
             //   row 3  TILLED soil, watered  — the same shapes, darker
-            //   row 4  damp overlay
-            //   row 5  mossy overlay
+            //   row 4  damp overlay  (not used by the game)
+            //   row 5  mossy overlay (not used by the game)
             //
             // Rows 3-5 each moved down by one when the tilled row was inserted;
             // every frame number below is measured from this list, so the list
@@ -2774,38 +2699,12 @@ var CONFIG = {
             // it is the stem — not the frame's bottom edge — that lands on the
             // cell centre, and the growth spring pins there too.
             CROP_STEM_Y: 230 / 256,
-            // The ground under a plant changes as it matures. Each entry ADDS a
-            // transparent perlin overlay on top of the map's own ground tile —
-            // nothing is replaced and nothing is removed, so by the last stage a
-            // cell is ground + damp + grass, all three visible. `frame` is a
-            // tilesheet FRAME index (not a map gid); the key is the crop stage
-            // that adds it. Cells with no crop are never touched.
-            //
-            // Blend modes differ on purpose:
-            //   MULTIPLY for damp — wet soil is the SAME soil darkened, so
-            //     multiplying keeps the ground's grain showing through and
-            //     adapts to whatever ground tile sits below it
-            //   NORMAL for grass — grass is new material lying on the soil,
-            //     not a darkening of it, so it should cover rather than tint
-            // Frames are on the TERRAIN sheet, not the canal one. `frame` is the
-            // FIRST of six consecutive edge variants — see CROP_OVERLAY_EDGES.
-            CROP_OVERLAY_ENABLED: false,
-                                    // TEMPORARILY OFF — the damp and mossy
-                                    // patches are hidden while the watered
-                                    // GROUND tile (GROUND_WET) is being judged
-                                    // on its own; the two were stacking on the
-                                    // same cells. The definitions below are kept
-                                    // intact: flip this back to true to restore
-                                    // them exactly as they were.
-            CROP_OVERLAY: {
-                2: { frame: 18, blend: 'MULTIPLY', alpha: 1 },   // damp  — row 4
-                4: { frame: 24, blend: 'NORMAL',   alpha: 1 },   // mossy — row 5
-            },
-            // Each overlay is drawn with a RAGGED edge where it borders bare
-            // ground and a straight one where it meets another overlay cell, so
-            // a patch gets an organic outline and a seamless interior. The six
-            // variants run left to right from the base frame; this lists which
-            // sides each draws ragged, as an N/E/S/W bitmask (N=1 E=2 S=4 W=8):
+            // EDGE VARIANTS. A worked patch (tilled soil, mud) is drawn with a
+            // RAGGED edge where it borders bare ground and a straight one where
+            // it meets more of itself, so it gets an organic outline and a
+            // seamless interior. The six variants run left to right from a
+            // row's first frame; this lists which sides each draws ragged, as an
+            // N/E/S/W bitmask (N=1 E=2 S=4 W=8):
             //   inner=0  n=1  ne=3  ns=5  nes=7  nesw=15
             // All 16 possible situations are covered by ROTATING one of these.
             // No flipped versions are needed, and a flip would mirror the
@@ -2836,73 +2735,6 @@ var CONFIG = {
                                     // centre. With the head gone the crop line is
                                     // the front, and the threshold has to match
                                     // the geometry.
-            // ── Bank shimmer ────────────────────────────────────────────────
-            // Once a cell has finished filling, a few small light streaks sit
-            // just inside the water at its edges and slowly fade up and down.
-            // It is the settled water's only animation and it does most of the
-            // work of making a still canal look alive — cheap, because the
-            // streaks never move: only their brightness changes.
-            MARK_ENABLED: false,    // TEMPORARILY OFF — the streaks read as white
-                                    // lines lying across the water rather than
-                                    // as glints in it. Everything below is left
-                                    // tuned as it was, so this is the only line
-                                    // to change to bring them back.
-            // Two rows of streaks per bank. The outer row sits against the
-            // water's edge and carries the effect; the inner row is a sparse
-            // scatter a little further in, which stops the outer one reading as
-            // a line ruled down the bank. Each entry: how far out as a fraction
-            // of the channel's half width (1 = on the water's edge, 0 = the
-            // centreline), the chance any one arm-side gets a streak, and the
-            // streak's size as fractions of a tile.
-            // Insets leave clear water on BOTH sides of each row: the outer row
-            // stands off the bank rather than hugging it, and the inner row
-            // stands off the outer one. Streaks touching the bank read as an
-            // edging painted on the canal instead of light floating on it.
-            // Insets are measured to the streak's CENTRE, so its own thickness
-            // eats into the gaps either side of it. Budget across the channel's
-            // half width (0.225 tile), from the bank inward:
-            //   bank → 0.030 clear → row 1 (0.055 thick) → 0.040 clear →
-            //   row 2 (0.045 thick) → the rest is open water to the centreline
-            // Thin rows are what make room for the gaps to be visible at all —
-            // there is only ~10px of half-channel on screen to work with.
-            MARK_LAYERS: [
-                { inset: 0.74, chance: 0.34, len: 0.60, thick: 0.055 },
-                { inset: 0.34, chance: 0.13, len: 0.36, thick: 0.045 },
-            ],
-            // STEPPED, not smooth. Every value below snaps between a handful of
-            // fixed states and holds, the way a hand-drawn pixel animation
-            // cycles frames — no easing, no interpolation. Brightness, drift and
-            // colour each run their own cycle at their own rate, so a streak
-            // rarely changes two things at once and the field never falls into
-            // a visible rhythm.
-            MARK_MIN:     0.15,     // dimmest state — never fully off
-            MARK_MAX:     0.70,     // brightest state
-            MARK_LEVELS:  4,        // how many brightness states to snap between
-            // Cycle times are for a WHOLE cycle, and a cycle is several steps —
-            // brightness at 4 levels is 6 steps up and back, so a 5s cycle
-            // holds each state for a bit over 800ms. That slowness is the
-            // point: a stepped animation that changes quickly reads as flicker.
-            MARK_MS_MIN:  4000,     // time for one full brightness cycle,
-            MARK_MS_MAX:  7000,     // randomised per streak
-            MARK_FADE_MS: 500,      // ease-in when a cell first settles (the one
-                                    // deliberately smooth part — a streak that
-                                    // popped into existence would read as a bug)
-            MARK_DRIFT:   0.03,     // lateral travel ALONG the bank, fraction of
-                                    // a tile — the extreme of the jump, not a
-                                    // smooth slide
-            MARK_DRIFT_STEPS: 3,    // discrete positions: back, centre, forward
-            MARK_DRIFT_MS: 6000,    // one full drift cycle, per streak ±25%
-            // Snaps between these in order and back again. Never pure white —
-            // that reads as UI rather than as light on water.
-            MARK_COLORS: [0xeaf6fb, 0xbfe8f7, 0x9fdcf2],
-            MARK_COLOR_MS: 7500,    // colour cycle, deliberately out of step
-                                    // with the brightness so they never align
-            // Measured off the art: the
-            // painted water spans ~0.45 of a tile in a branch tile, and the
-            // main canal's outer water edge sits ~0.19 tile from each of its
-            // two columns' centres. Streaks are placed against these.
-            MARK_CHAN:    0.45,     // painted branch water width, tile fraction
-            MARK_MAIN:    0.19,     // main canal outer edge, from cell centre
             // Where the MAIN canal's water sits in the stack. Above the crops
             // (~3.02) so the trencher can be drawn over the whole field and
             // still run under its own water. Branch water is unaffected — it
@@ -3524,8 +3356,6 @@ var CONFIG = {
 
             // ── Colours ───────────────────────────────────────────────────
             // (machine look comes from graphics/trencher/)
-            CUT_COLOR:     0x84694a,  // raw soil exposed in the cut under the
-                                      // machine, before the water reaches it
             // ── Spoil thrown clear ────────────────────────────────────────
             // The belt carries what it digs up out of the hole and flings it to
             // both sides. Two flat fans from the belt's lower end, each grain
@@ -3557,22 +3387,8 @@ var CONFIG = {
                 DEPTH:    3.04,    // UNDER the machine (3.05–3.07), over the crops
             },
 
-            // Grit and haze at the cutting face itself, falling back into the
-            // trench rather than being thrown clear of it.
+            // The haze at the cutting face itself.
             FACE: {
-                CHIPS: false,      // OFF. Grit thrown straight up the middle at
-                                   // the cut line, from the same debris texture
-                                   // as the two side sprays — so it read as a
-                                   // third spray fired at the camera rather than
-                                   // as material coming off the face. The sides
-                                   // already say the trench is being emptied.
-                                   // The dust haze below is unaffected
-                QUANTITY: 2,
-                EVERY_MS: 45,
-                SPEED_MIN: 20,
-                SPEED_MAX: 90,
-                GRAVITY:  260,
-                SIZE:     1.1,
                 DUST_EVERY_MS: 110,
                 DUST_ALPHA: 0.45,
             },
@@ -3794,9 +3610,8 @@ var CONFIG = {
             // uses — struck there, driven here. It may briefly move BACKWARD as
             // the spring pulls it in; that slosh is the point of it.
             //
-            // Nothing is drawn for this. The tile reveal and the head bulge both
-            // read the waterline and nothing else, so they bounce together for
-            // free.
+            // Nothing is drawn for this. The tile reveal reads the waterline and
+            // nothing else, so it bounces with it for free.
             //
             // Tuned in real units: HZ is how fast it bounces, DAMP how quickly
             // that dies away — below 1 it overshoots, at 1 it merely settles.
@@ -3916,30 +3731,6 @@ function checkFileExists(url) {
     });
 }
 
-// async function initBatteryImagePaths() {
-//     if (typeof BATTERY_TYPES === 'undefined' || !BATTERY_TYPES) {
-//         console.error('BATTERY_TYPES not found! Make sure batteryChargeData.js is loaded first.');
-//         return;
-//     }
-    
-//     // Get all battery levels from the new system
-//     const highestLevel = getHighestBatteryLevel();
-    
-//     for (let level = 1; level <= highestLevel; level++) {
-//         const batteryData = getBatteryData(level);
-//         if (!batteryData) continue;
-        
-//         const path = `graphics/battery/${batteryData.fileName}`;
-//         const ok = await checkFileExists(path);
-        
-//         if (ok) {
-//             BATTERY_IMAGE_PATHS[level] = path;
-//         } else {
-//             console.warn(`Battery image not found: ${path} for level ${level} (${batteryData.displayName})`);
-//         }
-//     }
-//     console.log(`Loaded ${Object.keys(BATTERY_IMAGE_PATHS).length} battery sprites`);
-// }
 async function initBatteryImagePaths() {
     if (typeof BATTERY_TYPES === 'undefined' || !BATTERY_TYPES) {
         console.error('BATTERY_TYPES not found! Make sure batteryChargeData.js is loaded first.');
@@ -3996,7 +3787,6 @@ function getBatteryIconLevel(level) {
 //   • Button coin icon:                 50 × 50 px   (BUTTON.COIN_ICON_WIDTH/HEIGHT)
 //   • Coin counter icon:                40 × 40 px   (COIN_COUNTER.COIN_ICON_WIDTH/HEIGHT)
 //   • Reward coin (animation):          32 × 32 px   (COIN_REWARD_ANIMATION.REWARD_COIN_SIZE)
-//   • Crown icon (unlock display):      32 × 32 px   (BATTERY_UNLOCK_DISPLAY.CROWN_ICON_SIZE)
 //   • Spawn button:                    250 × 90 px   (BUTTON.SPAWN_WIDTH/HEIGHT)
 //   • Level-up button:                 180 × 70 px   (BUTTON.LEVELUP_WIDTH/HEIGHT)
 // ===================================================================

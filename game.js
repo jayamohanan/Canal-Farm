@@ -75,11 +75,6 @@ class GameScene extends Phaser.Scene {
         this.slotHints          = null;   // the "put one here" arrows
         this.slotHintPending    = false;  // …scheduled but not yet up
         this.slotHintDone       = false;  // …shown and finished with
-        this.unlockDisplayContainer  = null;
-        this.unlockDisplayText       = null;
-        this.unlockDisplayBatteryIcon= null;
-        this.highestUnlockedBatteryLevel = 0;
-        this._taskIdx           = 0;    // which field (task) is being dug
         this.isWatchingAd = false;  // Flag to block interactions during ad
 
         this.CELL_SIZE  = CONFIG.CELL.SIZE;
@@ -381,10 +376,6 @@ class GameScene extends Phaser.Scene {
         const coinTextSize       = Math.max(12, Math.round(29 * scale)) + 'px';   // 40% down from 48
         const coinTextIconGap    = Math.max(3,  Math.round(5 * scale));
 
-        // Crown / battery-name unlock display
-        const crownIconSize      = Math.round(CONFIG.BATTERY_UNLOCK_DISPLAY.CROWN_ICON_SIZE * scale);
-        const unlockTextSize     = Math.max(12, Math.round(24 * scale)) + 'px';
-
         // Drawing geometry — cell and slot borders/radii
         const cellInset         = Math.max(1, Math.floor(CONFIG.CELL.INSET_BORDER_WIDTH * scale));
         const cellRadius        = Math.round(CONFIG.CELL.RADIUS * scale);
@@ -409,8 +400,6 @@ class GameScene extends Phaser.Scene {
             spawnBattIconX, spawnBattIconSize,
             // Coin counter
             coinIconSize, coinTextSize, coinTextIconGap,
-            // Crown display
-            crownIconSize, unlockTextSize,
             // Drawing geometry
             cellInset, cellRadius,
             // VFX
@@ -587,14 +576,10 @@ class GameScene extends Phaser.Scene {
         // being cut through it.
         this.createSlots();
         this.createRoad();
-        // The job list, over the farm half — needs the farm camera, so it comes
-        // after createRoad and before the camera-ignore snapshot at the end.
-        this._buildTaskPanel();
 
         // Bottom half — merge grid
         this.createGrid();
         this.createCoinDisplay();
-        this.createBatteryUnlockDisplay();
         this.spawnBatteryInGrid(0, 0, CONFIG.BATTERY_START_LEVEL);
         this.assets.prefetchBattery(CONFIG.BATTERY_START_LEVEL + 1);
         this.createButtons();
@@ -665,7 +650,6 @@ class GameScene extends Phaser.Scene {
         // at a grid cell so a slot and a cell read as the same object.
         const ssz         = L.slotSize;
         const chargeGap   = s(P.CHARGE_RATE_GAP);
-        const boltSize    = s(P.CHARGE_RATE_BOLT_SIZE);
         const fontSize    = Math.max(12, Math.round(22 * scale)) + 'px';
 
         // The three slots are spaced by the grid's own cell gap — same size, same
@@ -901,37 +885,20 @@ class GameScene extends Phaser.Scene {
             const rateX = vert ? slotX + outward * (ssz / 2 + casePad + labelW / 2) : slotX;
             const rateY = vert ? slotYi : slotYi - ssz / 2 - casePad - chargeGap;
             const SR = CONFIG.PLATFORM.SLOT_RATE || {};
-            // WITH NO BOLT, THE NUMBER TAKES THE WHOLE STRIP. The pair used to
-            // straddle rateX — figure right-aligned to its left, icon left-
-            // aligned to its right — so dropping the icon and leaving the text
-            // where it was would park every number in the left half of a strip
-            // reserved for both.
-            const solo = SR.BOLT === false;
-            const chargeRateText = this.add.text(solo ? rateX : rateX - 2, rateY, '', {
+            // The number takes the whole strip: there is no icon beside it (the
+            // charge bolt appears once, on the total).
+            const chargeRateText = this.add.text(rateX, rateY, '', {
                 fontSize, fontFamily: CONFIG.FONT_FAMILY,
                 color: SR.COLOR || '#ffffff', fontStyle: CONFIG.FONT_WEIGHT,
                 stroke: SR.STROKE || '#3a2a00',
                 strokeThickness: Math.max(1, Math.round((SR.STROKE_W !== undefined ? SR.STROKE_W : 3) * scale)),
-            }).setOrigin(solo ? 0.5 : 1, 0.5).setDepth(5).setVisible(false);
-
-            // AN INERT STAND-IN when the per-slot bolt is off. Ten places tell
-            // this object to show or hide as batteries come and go; giving them
-            // something that answers and draws nothing keeps every one of them
-            // correct without a null check apiece.
-            const chargeRateBolt = SR.BOLT === false
-                ? { setVisible() { return this; } }
-                : this.add.image(rateX + 2, rateY, 'bolt')
-                    .setDisplaySize(boltSize * (this.textures.get('bolt').getSourceImage().width /
-                                                this.textures.get('bolt').getSourceImage().height),
-                                    boltSize)
-                    .setOrigin(0, 0.5).setDepth(5).setVisible(false)
-                    .setTint(SR.BOLT_TINT !== undefined ? SR.BOLT_TINT : 0xffffff);
+            }).setOrigin(0.5, 0.5).setDepth(5).setVisible(false);
 
             this.platforms.push({
                 index: i,
                 slotX, slotY: slotYi, slotSize: ssz,
                 slotBg, slotBgFilled,
-                chargeRateText, chargeRateBolt,
+                chargeRateText,
                 batterySprite: null, batteryLevelText: null,
             });
         }
@@ -947,9 +914,7 @@ class GameScene extends Phaser.Scene {
     // inset bevel ring. Nine cells then cost nine images sharing two textures,
     // where they used to cost eighteen graphics objects.
     //
-    // Baked at the cell's true pixel size (the canvas runs at device pixels), and
-    // rebaked only when that size changes — i.e. on a resize, which restarts the
-    // scene anyway.
+    // Baked at the cell's true pixel size, and rebaked only if that size changes.
     _makeCellTextures(px) {
         const C = CONFIG.CELL;
         const N = C.NOISE || {};
@@ -1083,7 +1048,7 @@ class GameScene extends Phaser.Scene {
         this._depthOrigin = bottom;
         this._plantWaterN = 0;        // splash rotation counter (see _playPlantWater)
         this._worldBSet = new Set();
-        this._camBSnapDone = false;   // fresh build (incl. scene.restart on resize) → the set must refill
+        this._camBSnapDone = false;   // fresh build → the set must refill
         this.camB = null;
         this.camTop = null;           // rebuilt with everything else on a restart
         if (RC.ENDLESS && RC.ENDLESS.ENABLED) {
@@ -2631,7 +2596,7 @@ class GameScene extends Phaser.Scene {
             lay: { cls: 'produce', growth: 1, fruit: 0, support: null, harvest: null },
             stage: 1, timer: 0, sc: sx, watch: null,
             baseAngle: 0, sway: 0, swayV: 0, twF: null,
-            tilled: null, ground: null, ovl: 0,
+            tilled: null,
             readyAt: this.time.now,
         });
     }
@@ -4398,9 +4363,9 @@ class GameScene extends Phaser.Scene {
 
     // Which roam band a column is in: -1 west of the canal, +1 east, 0 forbidden.
     //
-    // Takes the grid explicitly — several levels are alive at once and each
-    // farmer must be judged against HIS OWN, not against this.tileGrid, which
-    // belongs to whichever level was built last.
+    // Takes the grid explicitly — several levels are alive at once and the
+    // farmer must be judged against the one he is ON, not against
+    // this.tileGrid, which belongs to whichever level was built last.
     _farmerBand(g, col) {
         const F = CONFIG.ROAD.TILEMAP.FARMER || {};
         if (!g) return 0;
@@ -4497,16 +4462,13 @@ class GameScene extends Phaser.Scene {
 
     _rndRange(r) { return r[0] + Math.random() * (r[1] - r[0]); }
 
-    // Built once and shared by every farmer, the same way the trencher's are.
-    // Only WALK is an animation — standing still is a held frame, so there is
+    // Built once, the same way the trencher's are. Only WALK is an animation — standing still is a held frame, so there is
     // nothing to build for it and nothing for the animation system to step.
     _makeFarmerAnims(name) {
         const key = name + '_walk';
         if (this.anims.exists(key)) return key;
         const F = CONFIG.ROAD.TILEMAP.FARMER || {};
-        // One per farmer, because an animation is bound to the frames of one
-        // texture. The definition is a handful of indices, so this costs nothing
-        // however long the rotation grows.
+        // Bound to the frames of the farmer's own sheet.
         this.anims.create({ key, repeat: -1,
             frameRate: F.WALK_FPS || 9,
             frames: this.anims.generateFrameNumbers(name,
@@ -6144,8 +6106,8 @@ class GameScene extends Phaser.Scene {
     // The level rotation as typed in config — see levelList in assets.js.
     _levels() { return levelList(); }
 
-    // The level being built now — the rotation wraps, so level 4 is level 1's
-    // map again with whatever crop the crop cycle has reached.
+    // The level being built now. The rotation wraps: past the last entry the run
+    // starts again at level 1's entry, map and crops together.
     _levelDef(index) {
         const ls = this._levels();
         return ls.length ? ls[index % ls.length] : null;
@@ -6431,8 +6393,6 @@ class GameScene extends Phaser.Scene {
                 if (baseAngle) spr.setAngle(baseAngle);
                 // `sc` is cached per crop so the stage-change spring knows the
                 // full y-scale to settle back to. Stage 1 spawns hard, unscaled.
-                // `ground` is this cell's ground tile — never changed itself, but
-                // the anchor the growth overlays are laid on. `ovl` counts them.
                 // growMul: this plant's own pace. A patch that reaches each stage
                 // in lockstep is what really reads as stamped — more than any
                 // silhouette repeat — so every plant runs a little fast or slow.
@@ -6445,8 +6405,7 @@ class GameScene extends Phaser.Scene {
                              lay, support: k ? null : support, fruit: null, twF: null,
                              tilled: k ? null : tilled, tilledOff: ev.off, tilledAngle: ev.angle,
                              growMul: 1 + (this._cellHash(c, r, 4) - 0.5) * 2 * (V.GROW_VAR || 0),
-                             ground: (seg.groundSprites || [])[r * g.cols + c] || null,
-                             ovl: 0, done: false };
+                             done: false };
                 crops.push(rec);
                 // FIRST ONE OWNS THE CELL. cropAt answers "what is growing at
                 // this spot" for the farmer's brush and the harvest, and it maps
@@ -6525,44 +6484,6 @@ class GameScene extends Phaser.Scene {
         return tbl;
     }
 
-    // Begin the overlay due at crop stage `at`, fading it in over `ms`. It is
-    // started one stage EARLY so it lands fully on exactly as that stage
-    // arrives — damp soil creeps in across the seed, grass across the young
-    // plant. Overlays STACK: each is a new sprite just above the last, so damp
-    // stays visible under the grass and nothing is ever replaced.
-    // Called again for a stage already laid (a skipped stage) it just snaps
-    // that one to full rather than adding a second copy.
-    _startCropOverlay(seg, cr, at, o, ms) {
-        if (!cr.ground) return;
-        const done = cr.ovlSpr || (cr.ovlSpr = {});
-        const full = o.alpha !== undefined ? o.alpha : 1;
-        if (done[at]) {                          // already laid
-            if (ms <= 0) {                       // stage passed — finish it now
-                this.tweens.killTweensOf(done[at]);
-                done[at].setAlpha(full);
-            }
-            return;
-        }
-        const gnd = cr.ground;
-        // Pick the edge variant for this cell's exposed sides, and the rotation
-        // that turns the drawn tile onto them. The tile is square and drawn from
-        // its centre, so rotating stays aligned to the cell.
-        const v = this._edgeVariants()[cr.edge || 0] || { off: 0, angle: 0 };
-        const spr = this._addB(this.add.image(gnd.x, gnd.y, 'terrain', o.frame + v.off)
-            .setDisplaySize(gnd.displayWidth, gnd.displayHeight)
-            .setAngle(v.angle)
-            // Ground sits at 1.4 and the dry branches at 1.5; each overlay slots
-            // between them in the order it was added.
-            .setDepth(1.4 + 0.02 * (++cr.ovl)), seg);
-        const bm = o.blend && Phaser.BlendModes[o.blend];
-        if (bm !== undefined) spr.setBlendMode(bm);
-        done[at] = spr;
-        if (ms <= 0) { spr.setAlpha(full); return; }
-        spr.setAlpha(0);
-        this.tweens.add({ targets: spr, alpha: full, duration: ms, ease: 'Sine.easeIn' });
-        return spr;
-    }
-
     // What a plant settles back to at a given stage — its own base size times
     // that stage's spread. Kept in one place because three things read it: the
     // sprite when a stage lands, the spring that springs back to it, and the
@@ -6590,20 +6511,10 @@ class GameScene extends Phaser.Scene {
         const wet    = TM.CROP_WET !== undefined ? TM.CROP_WET : 0.15;
         const popFr  = TM.CROP_POP_FROM !== undefined ? TM.CROP_POP_FROM : 0.8;
         const popMs  = TM.CROP_POP_MS   !== undefined ? TM.CROP_POP_MS   : 260;
-        // stage → ground overlay to add. Nulled by the switch, which is all it
-        // takes: every overlay is laid from this one map, so nothing downstream
-        // needs to know they are off.
-        const ovl    = TM.CROP_OVERLAY_ENABLED === false ? null : (TM.CROP_OVERLAY || null);
         for (const seg of this.segments) {
             if (!seg.crops) continue;
             for (const cr of seg.crops) {
                 if (cr.done || !cr.watch || cr.watch.progress <= wet) continue;
-                // The very first tick after this cell's canal wets: the plant is
-                // still a seed, and that is when the overlay due one stage later
-                // begins its fade, so damp soil arrives exactly as it sprouts.
-                if (ovl && cr.timer === 0 && ovl[cr.stage + 1]) {
-                    this._startCropOverlay(seg, cr, cr.stage + 1, ovl[cr.stage + 1], growMs);
-                }
                 cr.timer += dt;
                 // Each plant keeps its own pace (growMul), so a patch arrives at
                 // each stage staggered instead of all at once.
@@ -6632,17 +6543,6 @@ class GameScene extends Phaser.Scene {
                             .setDepth(this._yDepth(cr.sprite.y,
                                 TM.CROP_FRUIT_BIAS !== undefined ? TM.CROP_FRUIT_BIAS : 0.0003)),
                             seg);
-                    }
-                    // Overlays fade in ACROSS a stage, not on arrival: entering a
-                    // stage starts the one due at the next. Every crossed stage is
-                    // scanned, so a skipped stage (a long frame, or the level
-                    // running fast) still lays its layer — snapped straight to
-                    // full, since its fade window has already gone by.
-                    if (cr.ground && ovl) {
-                        for (let s = from + 1; s <= st; s++) {
-                            if (ovl[s + 1]) this._startCropOverlay(seg, cr, s + 1, ovl[s + 1], growMs);
-                            if (ovl[s])     this._startCropOverlay(seg, cr, s,     ovl[s],     0);
-                        }
                     }
                     // Spring the new frame up from a squashed y-scale. Only
                     // reachable for stage 2+, so the seed never animates.
@@ -6821,11 +6721,9 @@ class GameScene extends Phaser.Scene {
                 });
             }
         }
-        this._ensureMarkTexture();
         this._ensureRippleTexture();
         return { g, cells, active: [], triggered: new Set(),
                  mainLeftCol: g.mainLeftCol, mainRightCol: g.mainRightCol,
-                 marks: [],
                  channelW: this.road.canalW, seg,
                  met: new Set(),        // cell pairs whose fronts have already met
                };
@@ -6903,87 +6801,8 @@ class GameScene extends Phaser.Scene {
         if (seg) seg.busy = Math.max(0, (seg.busy || 0) + n);
     }
 
-    // Lay the shimmer streaks on a cell that has just finished filling. One
-    // per arm-side at most, and only some of those — sparse and irregular, so
-    // it never reads as an outline drawn down the banks. Positions are fixed
-    // here and never touched again; only brightness animates afterwards.
-    _placeCellMarks(tn, F, cell, time) {
-        const TM = CONFIG.ROAD.TILEMAP, g = F.g;
-        const layers = TM.MARK_LAYERS || [{ inset: 0.86, chance: 0.34, len: 0.30, thick: 0.07 }];
-        const half = (TM.MARK_CHAN !== undefined ? TM.MARK_CHAN : 0.45) / 2;
-        const mainOut = TM.MARK_MAIN !== undefined ? TM.MARK_MAIN : 0.19;
-        const drift = (TM.MARK_DRIFT !== undefined ? TM.MARK_DRIFT : 0.03) * g.tile;
-        const driftMs = TM.MARK_DRIFT_MS || 2600;
-        const cx = g.left   + (cell.col + 0.5) * g.tile;
-        const cy = tn.exitY + (cell.row + 0.5) * g.tile;
-
-        // One entry per bank a streak could sit against. A main cell is always
-        // a vertical run, and its two centre columns each have only ONE outer
-        // bank — the seam between them is open water, so a streak there would
-        // be a glint down the middle of the canal.
-        const OPP = { n: 's', e: 'w', s: 'n', w: 'e' };
-        const banks = [];
-        if (cell.isMain) {
-            banks.push({ vert: true, side: cell.col === F.mainLeftCol ? -1 : 1,
-                         edge: mainOut, straight: true });
-        } else {
-            for (const d of ['n', 'e', 's', 'w']) {
-                if (!cell.conn[d]) continue;
-                // A straight run's two arms share the same PAIR of banks, so
-                // take that pair once — otherwise every straight tile gets
-                // twice the streaks of a corner.
-                const straight = !!cell.conn[OPP[d]];
-                if (straight && (d === 'n' || d === 'w')) continue;
-                for (const side of [-1, 1]) banks.push({ vert: d === 'n' || d === 's',
-                                                         side, edge: half, dir: d, straight });
-            }
-        }
-        for (const L of layers) {
-            const lenP = L.len * g.tile, thkP = L.thick * g.tile;
-            const span = 0.5 * g.tile - lenP / 2;      // keeps it inside the tile
-            for (const b of banks) {
-                if (Math.random() > L.chance) continue;
-                let along;
-                if (b.straight) {
-                    // The bank runs unbroken through the cell, so the streak may
-                    // sit anywhere along it — which is what lets it be long.
-                    if (span <= 0) continue;
-                    along = -span + Math.random() * 2 * span;
-                } else {
-                    // A turn or a junction: stay outside the cell's open centre,
-                    // where there is no bank to catch light.
-                    const lo = half * g.tile;
-                    if (span <= lo) continue;
-                    along = (lo + Math.random() * (span - lo)) *
-                            (b.dir === 'n' || b.dir === 'w' ? -1 : 1);
-                }
-                const off = b.side * b.edge * L.inset * g.tile;
-                const x = b.vert ? cx + off   : cx + along;
-                const y = b.vert ? cy + along : cy + off;
-                const spr = this._addB(this.add.image(x, y, 'mark_px')
-                    .setDisplaySize(b.vert ? thkP : lenP, b.vert ? lenP : thkP)
-                    // On its own water, under its own head — main canal high,
-                    // branch down in the ground layers.
-                    .setDepth(cell.isMain ? this._mainDepth() + 0.006 : 1.556)
-                    .setAlpha(0), F.seg);
-                F.marks.push({
-                    spr, t0: time, x, y, vert: b.vert, drift,
-                    phase:   Math.random() * Math.PI * 2,
-                    period:  (TM.MARK_MS_MIN || 1500) +
-                             Math.random() * ((TM.MARK_MS_MAX || 3000) - (TM.MARK_MS_MIN || 1500)),
-                    dPhase:  Math.random() * Math.PI * 2,
-                    dPeriod: driftMs * (0.75 + Math.random() * 0.5),
-                    cPhase:  Math.random() * Math.PI * 2,
-                });
-            }
-        }
-        cell.marked = true;
-    }
-
-    // A crisp solid-white rectangle, tinted per streak at runtime. Hard edges,
-    // so the shimmer reads as a facet of light on the surface rather than a glow.
-    // A hollow white circle, tinted per use — white for the same reason mark_px
-    // is: one texture serves any colour the effect ever wants.
+    // A hollow white circle, tinted per use, so one texture serves any colour
+    // the effect ever wants.
     //
     // Drawn large and scaled DOWN in play, so the stroke stays clean at the size
     // it actually appears; a 24px ring blown up would go to mush.
@@ -7014,9 +6833,8 @@ class GameScene extends Phaser.Scene {
         const to   = (H.TO   !== undefined ? H.TO   : 1.15) * g.tile;
         const ms   = H.MS !== undefined ? H.MS : 380;
         const rings = Math.max(1, H.RINGS || 1);
-        // Above the water it lands on, and above the head that led it there. The
-        // main canal's water sits in a different band to a branch's, so the
-        // ripple follows the same split the head does.
+        // Above the water it lands on. The main canal's water sits in a
+        // different band to a branch's, so the ripple follows the same split.
         const depth = isMain ? this._mainDepth() + 0.012 : 1.565;
 
         for (let i = 0; i < rings; i++) {
@@ -7037,14 +6855,6 @@ class GameScene extends Phaser.Scene {
                 onComplete: () => spr.destroy(),       // slowing as it spreads
             });
         }
-    }
-
-    _ensureMarkTexture() {
-        if (this.textures.exists('mark_px')) return;
-        const t = this.textures.createCanvas('mark_px', 4, 4);
-        const c = t.getContext();
-        c.fillStyle = '#ffffff'; c.fillRect(0, 0, 4, 4);
-        t.refresh();
     }
 
     _updateFloodOne(tn, dt, time) {
@@ -7177,46 +6987,9 @@ class GameScene extends Phaser.Scene {
         //    follows every bend in the channel because it is the channel. Main
         //    cells reveal the DRY tile (by the dig) then the FILLED tile (by the
         //    water); branches reveal only FILLED.
-        const marks = CONFIG.ROAD.TILEMAP.MARK_ENABLED !== false;
         for (const cell of F.cells.values()) {
             if (cell.isMain) this._revealCrop(cell.dry, cell.dryP, 's');
             this._revealCrop(cell.flow, cell.progress, cell.entryDir);
-            // Shimmer belongs to SETTLED water — while a cell is still filling
-            // the moving crest is the interest, so wait for it to finish.
-            if (marks && cell.filled && !cell.marked) {
-                this._placeCellMarks(tn, F, cell, time);
-            }
-        }
-        // STEPPED animation. Each value snaps between a few fixed states and
-        // holds — nothing eases. `stepIdx` walks a cycle up through the states
-        // and back down (0,1,2,3,2,1…) so a streak brightens and dims in
-        // discrete jumps rather than sliding. Brightness, drift and colour run
-        // at different rates so they rarely change on the same frame. Only
-        // position, alpha and tint change; none disturb the draw order.
-        if (F.marks.length) {
-            const MK = CONFIG.ROAD.TILEMAP;
-            const lo = MK.MARK_MIN !== undefined ? MK.MARK_MIN : 0.15;
-            const hi = MK.MARK_MAX !== undefined ? MK.MARK_MAX : 0.70;
-            const fadeMs = MK.MARK_FADE_MS !== undefined ? MK.MARK_FADE_MS : 500;
-            const lv = Math.max(2, MK.MARK_LEVELS || 4);
-            const ds = Math.max(2, MK.MARK_DRIFT_STEPS || 3);
-            const cols = MK.MARK_COLORS || [0xeaf6fb, 0x9fdcf2];
-            const cMs = MK.MARK_COLOR_MS || 3400;
-            // Position in a hold-and-jump cycle: 0..n-1 and back, never between.
-            const stepIdx = (t, periodMs, n, phase) => {
-                const span = 2 * n - 2;                       // up then back down
-                const i = Math.floor((((t / periodMs + phase) % 1) + 1) % 1 * span);
-                return i < n ? i : span - i;
-            };
-            for (const m of F.marks) {
-                const fade = fadeMs > 0 ? Math.min(1, (time - m.t0) / fadeMs) : 1;
-                const b = stepIdx(time, m.period, lv, m.phase) / (lv - 1);
-                m.spr.setAlpha((lo + (hi - lo) * b) * fade);
-                const d = stepIdx(time, m.dPeriod, ds, m.dPhase) / (ds - 1) * 2 - 1;
-                if (m.vert) m.spr.y = m.y + d * m.drift;
-                else        m.spr.x = m.x + d * m.drift;
-                m.spr.setTint(cols[stepIdx(time, cMs, cols.length, m.cPhase)]);
-            }
         }
     }
 
@@ -7334,10 +7107,7 @@ class GameScene extends Phaser.Scene {
                      || r.canalW / (CONFIG.ROAD.TILEMAP.MAIN_TILES || 2);
         const digLen = len + this._overrunTiles() * tile;
 
-        // The soil strip is CHANNEL-sized: what the machine leaves behind is
-        // exactly as wide as the finished canal.
-        const cutW = Math.round(r.canalW);
-        this._makeTunnelTextures(cutW);
+        this._makeTunnelTextures();
 
         // ── Trencher geometry ─────────────────────────────────────────────
         // One ratio sizes the whole rig: the belt art's width maps onto
@@ -7371,10 +7141,6 @@ class GameScene extends Phaser.Scene {
         // head of the built canal and works upward. Drawn above the water it
         // leaves behind.
         const x = band.cx;
-        // The raw cut: a strip of churned soil over the dug wake, face back
-        // to the mouth it started from.
-        const cut = this._addB(this.add.tileSprite(x, entryY, cutW, 1, 'cut_sand')
-            .setOrigin(0.5, 0).setDepth(2.05).setVisible(false), seg);
         // Two sprites, one rig. The trenching unit is drawn ABOVE the control
         // unit so the belt reads as passing over the machine's frame, and both
         // sit over the dry trench tile (1.52) but under the water itself
@@ -7447,7 +7213,7 @@ class GameScene extends Phaser.Scene {
                 .setVisible(false), seg);                // shown once digging starts
         }
         const spoil = this._makeSpoilEmitters(seg);
-        const bore = { x, cut, belt, ctrl, shadow, cutEdge, edgeFrame: 0, spoil,
+        const bore = { x, belt, ctrl, shadow, cutEdge, edgeFrame: 0, spoil,
                        beltDY, ctrlDY, rigW: beltW,
                        // the shadow rides the control unit's top edge
                        shdDY: ctrlDY - ctrlH / 2 + shdDY,
@@ -7633,57 +7399,15 @@ class GameScene extends Phaser.Scene {
         for (const o of [b.belt, b.ctrl]) if (o) o.x = b.x + dx;
     }
 
-    _makeTunnelTextures(cutW) {
-        // Dimensions are identical for every segment, so bake once and reuse —
-        // never remove textures a previous segment's sprites still display.
-        if (this.textures.exists('cut_sand')) return;
-
-        // The raw-cut floor: churned sand, not flat paint — per-pixel grain
-        // noise, scattered darker pebbles, faint vertical drag streaks from
-        // the flights, and WANDERING ragged edges: each side's edge is a slow
-        // multi-frequency wave (whole cycles per tile, so it wraps seamlessly)
-        // plus per-row jitter — a torn, dug-out line instead of a ruler edge.
+    _makeTunnelTextures() {
+        // The spoil emitters' textures. The same for every segment, so bake once
+        // and reuse — never remove textures a previous segment's emitters still
+        // draw from.
+        if (this.textures.exists('debris_chip')) return;
         const TN = CONFIG.ROAD.TUNNEL;
-        const cw = Math.max(8, cutW || 32), chh = 64;
-        const base = [(TN.CUT_COLOR >> 16) & 255, (TN.CUT_COLOR >> 8) & 255, TN.CUT_COLOR & 255];
-        if (this.textures.exists('cut_sand')) this.textures.remove('cut_sand');
-        const sand = this.textures.createCanvas('cut_sand', cw, chh);
-        const sctx = sand.getContext();
-        const simg = sctx.createImageData(cw, chh);
-        const streak = [];
-        for (let x = 0; x < cw; x++) {
-            streak[x] = 1 + Math.sin(x * 1.7) * 0.05 + (Math.random() - 0.5) * 0.06;
-        }
-        const maxRag = Math.max(3, cw * 0.16);
-        const phases = [0, 0, 0, 0].map(() => Math.random() * Math.PI * 2);
-        const edgeAt = (y, p1, p2) => {
-            const t = (y / chh) * Math.PI * 2;
-            return maxRag * (0.45 + 0.30 * Math.sin(t + p1)
-                                  + 0.22 * Math.sin(3 * t + p2))
-                 + Math.random() * 1.6;
-        };
-        for (let y = 0; y < chh; y++) {
-            const ragL = edgeAt(y, phases[0], phases[1]);
-            const ragR = edgeAt(y, phases[2], phases[3]);
-            for (let x = 0; x < cw; x++) {
-                let f = streak[x] * (0.86 + Math.random() * 0.26);
-                if (Math.random() < 0.03) f *= 0.7;    // dark pebble grain
-                if (Math.random() < 0.02) f *= 1.25;   // bright fleck
-                const p = (y * cw + x) * 4;
-                simg.data[p]     = Math.min(255, Math.round(base[0] * f));
-                simg.data[p + 1] = Math.min(255, Math.round(base[1] * f));
-                simg.data[p + 2] = Math.min(255, Math.round(base[2] * f));
-                // Soft one-pixel fringe at the torn line, not a hard cliff.
-                const d = Math.min(x - ragL, (cw - 1 - x) - ragR);
-                simg.data[p + 3] = d < 0 ? 0 : d < 1 ? 150 : 255;
-            }
-        }
-        sctx.putImageData(simg, 0, 0);
-        sand.refresh();
 
         // Debris sprites are baked WHITE and tinted per spawn — one texture,
         // many sand shades. The puff is a soft radial gradient for dust.
-        if (this.textures.exists('debris_chip')) this.textures.remove('debris_chip');
         const chipPx = Math.max(2, Math.round((TN.CHIP_SIZE || 10)
                         * this.layoutConfig.platformScale));
         const chip = this.textures.createCanvas('debris_chip', chipPx, chipPx);
@@ -7692,7 +7416,6 @@ class GameScene extends Phaser.Scene {
         cc.fillRect(0, 0, chipPx, chipPx);
         chip.refresh();
 
-        if (this.textures.exists('dust_puff')) this.textures.remove('dust_puff');
         const puff = this.textures.createCanvas('dust_puff', 24, 24);
         const pc = puff.getContext();
         const grad = pc.createRadialGradient(12, 12, 2, 12, 12, 12);
@@ -8290,9 +8013,8 @@ class GameScene extends Phaser.Scene {
                 }
             }
         }
-        // The soil strip in the wake is no longer shown — the ditch sprite is
-        // what gets uncovered as the grass recedes. (The cut sprite is kept only
-        // so its width still feeds the foam-finger layout.)
+        // No soil strip in the wake — the ditch tile is what gets uncovered as
+        // the grass recedes.
 
         // Soil chips off the face while cutting. How much, and how far it is
         // thrown, follows the belt — the belt is what flings it.
@@ -8314,8 +8036,8 @@ class GameScene extends Phaser.Scene {
         // DAM MODE holds the water back until the trench is finished, so the
         // level is cut dry and then flooded in one run from the mouth.
         // `flooding` is set at breakthrough and is the only thing that lifts the
-        // hold. Everything downstream — branches, crops, ponds, foam, the bank
-        // streaks — keys off the waterline, so freezing it here is all it takes.
+        // hold. Everything downstream — branches, crops, ponds — keys off the
+        // waterline, so freezing it here is all it takes.
         // THE LEVEL BELOW IS STILL BEING WATCHED. A tunnel's water is dammed
         // until the farm under it has finished — otherwise the machine, which no
         // longer waits for anything, would water the next field while the player
@@ -8424,11 +8146,10 @@ class GameScene extends Phaser.Scene {
     // performance story: an emitter keeps its particles in a pre-allocated pool
     // and steps them in one loop, where a tween each meant hundreds of objects a
     // second being created and collected — the churn that costs frames on a
-    // low-end phone. Four emitters replace what was ~700 tweens per second.
+    // low-end phone. Three emitters replace what was ~700 tweens per second.
     //
     //   sprayL / sprayR — the trench being emptied: soil flung clear to both
     //                     sides at the cut line, arcing down under gravity
-    //   chips           — grit off the face itself, falling back into the cut
     //   dust            — the haze that hangs at the face. The ONLY one that
     //                     grows as it travels, because that is what dust does
     //                     and what sand must not do
@@ -8467,22 +8188,6 @@ class GameScene extends Phaser.Scene {
         return {
             sprayL: fan(-1),
             sprayR: fan(1),
-            // Grit off the cutting face, dropping back into the trench behind it.
-            // Off by default: it fires up the middle from the same texture as
-            // the side sprays, which reads as a third spray aimed at the camera.
-            chips: D.CHIPS === false ? null : this._addB(this.add.particles(0, 0, 'debris_chip', {
-                angle:    { min: 60, max: 120 },
-                speed:    { min: px(D.SPEED_MIN || 20), max: px(D.SPEED_MAX || 90) },
-                gravityY: px(D.GRAVITY || 260),
-                lifespan: { min: 380, max: 760 },
-                scale:    { start: D.SIZE || 1.1, end: (D.SIZE || 1.1) * 0.5 },
-                alpha:    { start: 1, end: 0 },
-                rotate:   { min: 0, max: 90 },
-                tint:     cols,
-                quantity: D.QUANTITY || 2,
-                frequency: D.EVERY_MS || 45,
-                emitting: false,
-            }).setDepth(3.12), seg),
             // The one thing that should billow.
             dust: this._addB(this.add.particles(0, 0, 'dust_puff', {
                 angle:    { min: 55, max: 125 },
@@ -8535,14 +8240,13 @@ class GameScene extends Phaser.Scene {
         const x = b.rigW * (S.OFFSET_X !== undefined ? S.OFFSET_X : 0.22);
         sp.sprayL.setPosition(b.x - x, y);
         sp.sprayR.setPosition(b.x + x, y);
-        if (sp.chips) sp.chips.setPosition(b.x, faceY);
         sp.dust.setPosition(b.x, faceY);
         // THROWN ONLY WHILE THE BELT IS TURNING. Soil coming off a stopped belt
         // is the one thing that would give the burst away as a trick — the whole
         // point is that the machine works in lunges, and the spray is the most
         // visible evidence of work there is.
         const on = cutting && (!tn || tn.beltOn !== false);
-        for (const e of [sp.sprayL, sp.sprayR, sp.chips, sp.dust]) if (e) e.emitting = on;
+        for (const e of [sp.sprayL, sp.sprayR, sp.dust]) if (e) e.emitting = on;
     }
 
     // The blade exits the far edge: retire the machines, then flood the last
@@ -8682,40 +8386,38 @@ class GameScene extends Phaser.Scene {
             // is home: the camera used to set off while the icon was still in
             // flight, leaving it to fly across a shot that was already panning.
             const finish = () => {
-                // Tick the job off, move the view on to the next farm, and only
-                // then release whatever was waiting. The pan is the punctuation
-                // between two levels: it happens with the rig parked, so the
-                // camera is free to climb at its own pace for once.
-                this._completeTask(() => {
-                    // THE FARM IS DONE WITH. Only now does its top fence go
-                    // see-through — it stood solid through the whole beat, which
-                    // is what the beat is for, and gives way just as the view
-                    // leaves for the next field.
-                    this._focusFence(nextSeg);
-                    this._panToLevel(nextSeg, () => {
-                        E.held = false;
-                        E.camHold = false;
-                        // THE ROSTER TURNS OVER LAST OF ALL — after the icon
-                        // has landed, after the task, after the camera has
-                        // moved. The fifth slot has to be SEEN filled: cleared
-                        // on the icon's own arrival it lasted a single frame,
-                        // and cleared at the handover it was gone before the
-                        // melon ever left the field.
-                        //
-                        // Here it coincides with arriving at the new farm, which
-                        // is also when an empty row starts meaning something
-                        // again.
-                        this._setRosterLabel(nextSeg ? nextSeg.levelIndex || 0 : 0);
-                        if (next) {
-                            next.ready = true;
-                            // AND ITS WATER IS LET GO. The farm below is
-                            // finished and the view is on this one, so the canal
-                            // the machine has been cutting all this time floods
-                            // at last — it may be most of a level long by now,
-                            // which is the reward for the charge that dug it.
-                            next.waterHold = false;
-                        }
-                    });
+                // Move the view on to the next farm, and only then release
+                // whatever was waiting. The pan is the punctuation between two
+                // levels: it happens with the rig parked, so the camera is free
+                // to climb at its own pace for once.
+                // THE FARM IS DONE WITH. Only now does its top fence go
+                // see-through — it stood solid through the whole beat, which
+                // is what the beat is for, and gives way just as the view
+                // leaves for the next field.
+                this._focusFence(nextSeg);
+                this._panToLevel(nextSeg, () => {
+                    E.held = false;
+                    E.camHold = false;
+                    // THE ROSTER TURNS OVER LAST OF ALL — after the icon
+                    // has landed, after the camera has
+                    // moved. The fifth slot has to be SEEN filled: cleared
+                    // on the icon's own arrival it lasted a single frame,
+                    // and cleared at the handover it was gone before the
+                    // melon ever left the field.
+                    //
+                    // Here it coincides with arriving at the new farm, which
+                    // is also when an empty row starts meaning something
+                    // again.
+                    this._setRosterLabel(nextSeg ? nextSeg.levelIndex || 0 : 0);
+                    if (next) {
+                        next.ready = true;
+                        // AND ITS WATER IS LET GO. The farm below is
+                        // finished and the view is on this one, so the canal
+                        // the machine has been cutting all this time floods
+                        // at last — it may be most of a level long by now,
+                        // which is the reward for the charge that dug it.
+                        next.waterHold = false;
+                    }
                 });
             };
             if (name) {
@@ -8725,157 +8427,6 @@ class GameScene extends Phaser.Scene {
             } else finish();
         };
         wait();
-    }
-
-    // ================================================================
-    // TASK LIST — the field you are digging, and the one after it
-    // ================================================================
-    // Two rows at the top-left of the farm half: the live job, and the next one
-    // greyed out. Finishing a field ticks the top row, drops it, promotes the
-    // second and brings a third in below.
-    //
-    // The panel is drawn by the FARM camera, not the UI one. Added cameras render
-    // ABOVE the main camera, so anything the main camera puts over the farm half
-    // is buried by the field. Registering it as world content and pinning its
-    // scroll factor to zero gets it drawn by the farm camera but held still while
-    // that camera pans. The catch is that a zero-scroll object's x is measured
-    // from the CAMERA VIEWPORT's edge, not the screen's — so these coordinates
-    // start at 0 for the left edge of the farm half.
-    _buildTaskPanel() {
-        const T = CONFIG.TASKS;
-        if (!T || T.ENABLED === false) return;
-        const L = this.layoutConfig, s = L.scale, B = L.partB;
-        const ui = this.taskUI = {
-            s,
-            x:    T.PAD * s,
-            y:    T.PAD * s,
-            w:    T.WIDTH * s,
-            rowH: T.ROW_H * s,
-            // With no farm camera (endless off) the panel is plain UI, so it uses
-            // real screen coordinates instead.
-            ox:   this.camB ? 0 : B.x,
-            rows: [],
-        };
-        ui.x += ui.ox;
-
-        const bg = this.add.graphics().setDepth(T.DEPTH - 1);
-        bg.fillStyle(hexColor(T.BG_COLOR), T.BG_ALPHA !== undefined ? T.BG_ALPHA : 0.42);
-        bg.fillRoundedRect(ui.x - 6 * s, ui.y - 6 * s,
-                           ui.w + 12 * s, ui.rowH * 2 + 12 * s, (T.BG_RADIUS || 10) * s);
-        this._pinToFarm(bg);
-        ui.bg = bg;
-
-        for (let i = 0; i < 2; i++) ui.rows.push(this._makeTaskRow(this._taskIdx + i, i));
-    }
-
-    // Hold a UI object still over the farm half — see _buildTaskPanel.
-    _pinToFarm(obj) {
-        obj.setScrollFactor(0);
-        if (this.camB) this._addB(obj, null);      // farm camera draws it, main ignores it
-        return obj;
-    }
-
-    // One row: "n/65", the field's name, and an empty tick ring.
-    _makeTaskRow(index, slot) {
-        const T = CONFIG.TASKS, ui = this.taskUI, s = ui.s;
-        const y = ui.y + slot * ui.rowH;
-        const c = this.add.container(0, 0).setDepth(T.DEPTH);
-        const label = (x, text, size, align) => this.add.text(x, y + ui.rowH / 2, text, {
-            fontFamily: CONFIG.FONT_FAMILY,
-            fontSize: Math.max(9, Math.round(size * s)) + 'px',
-            color: T.TEXT_COLOR || '#ffffff',
-            stroke: '#000000', strokeThickness: Math.max(1, 2 * s),
-        }).setOrigin(align, 0.5);
-
-        const name = CONFIG.TASKS.NAMES[index] || T.FALLBACK || '<no name>';
-        c.add(label(ui.x, `${index + 1}/${T.TOTAL || 65}`, T.COUNT_SIZE || 15, 0));
-        c.add(label(ui.x + (T.COUNT_W || 52) * s, name, T.NAME_SIZE || 17, 0));
-
-        // Tick: an empty ring on the right, and the check that springs into it
-        // when the field is done (hidden until then).
-        const tx = ui.x + ui.w, ty = y + ui.rowH / 2, r = (T.TICK_R || 11) * s;
-        const ring = this.add.circle(tx, ty, r).setStrokeStyle(
-            Math.max(1, (T.TICK_W || 2.5) * s), hexColor(T.TEXT_COLOR || '#ffffff'), 1);
-        const check = this.add.graphics();
-        check.lineStyle(Math.max(1.5, (T.TICK_W || 2.5) * 1.3 * s),
-                        hexColor(T.DONE_COLOR || '#8ce87a'), 1);
-        check.beginPath();
-        check.moveTo(tx - r * 0.45, ty);
-        check.lineTo(tx - r * 0.1,  ty + r * 0.42);
-        check.lineTo(tx + r * 0.52, ty - r * 0.45);
-        check.strokePath();
-        check.setVisible(false);
-        c.add(ring); c.add(check);
-
-        this._pinToFarm(c);
-        c.setAlpha(slot === 0 ? 1 : (T.DIM_ALPHA !== undefined ? T.DIM_ALPHA : 0.45));
-        return { cont: c, ring, check, index, slot };
-    }
-
-    // The level's closing beat: tick the top row, hold, then shift the list up
-    // and bring the next job in. `done` runs once the list has settled — the
-    // camera waits for it, so the tick is never cut short by the pan.
-    _completeTask(done) {
-        const T = CONFIG.TASKS, ui = this.taskUI;
-        if (!ui || !ui.rows.length) { done(); return; }
-        const s = ui.s, row = ui.rows[0];
-
-        row.ring.setStrokeStyle(Math.max(1, (T.TICK_W || 2.5) * s),
-                                hexColor(T.DONE_COLOR || '#8ce87a'), 1);
-        row.check.setVisible(true).setScale(0);
-        this.tweens.add({
-            targets: row.check, scale: 1,
-            duration: T.TICK_MS || 420, ease: 'Back.easeOut',
-        });
-        this.tweens.add({
-            targets: row.ring, scale: 1.25,
-            duration: (T.TICK_MS || 420) * 0.45, yoyo: true, ease: 'Quad.easeOut',
-        });
-
-        this.time.delayedCall((T.TICK_MS || 420) + (T.HOLD_MS || 320), () => {
-            // Three steps, strictly one after another — each starts only when the
-            // one before it has finished. Overlapping them reads as the list
-            // rearranging itself; in sequence it reads as a job being crossed off,
-            // the next taking its place, and another arriving behind it.
-            //
-            // A row's text is laid out at the slot it was BORN in and the
-            // container's y carries it from there, so every move is relative to
-            // where the row already sits, never to a fixed slot.
-            const ms = T.SHIFT_MS || 380;
-            const up = ui.rows[1];
-            this._taskIdx++;
-
-            // 1. the finished job leaves.
-            this.tweens.add({
-                targets: row.cont, alpha: 0, y: row.cont.y - ui.rowH * 0.5,
-                duration: ms, ease: 'Quad.easeIn',
-                onComplete: () => {
-                    row.cont.destroy();
-                    if (!up) { ui.rows = []; done(); return; }
-
-                    // 2. only now does the next job move up into the empty slot.
-                    up.slot = 0;
-                    this.tweens.add({
-                        targets: up.cont, y: up.cont.y - ui.rowH, alpha: 1,
-                        duration: ms, ease: 'Quad.easeOut',
-                        onComplete: () => {
-
-                            // 3. and only once it has arrived does a new one show
-                            //    up underneath it.
-                            const next = this._makeTaskRow(this._taskIdx + 1, 1);
-                            next.cont.setAlpha(0);
-                            this.tweens.add({
-                                targets: next.cont,
-                                alpha: T.DIM_ALPHA !== undefined ? T.DIM_ALPHA : 0.45,
-                                duration: ms, ease: 'Quad.easeOut',
-                                onComplete: done,
-                            });
-                            ui.rows = [up, next];
-                        },
-                    });
-                },
-            });
-        });
     }
 
     // ── Endless progression ──────────────────────────────────────────────────
@@ -9178,16 +8729,6 @@ class GameScene extends Phaser.Scene {
     }
 
     // ── Play / pause ─────────────────────────────────────────────────────────
-    // Drawn by the FARM camera, not the UI one — the same trap the task panel
-    // documents. Added cameras render ABOVE the main camera, so a button the
-    // main camera puts in the top-right is buried by the field, which occupies
-    // that corner in both orientations. It stayed clickable while invisible.
-    //
-    // Registering it as world content and pinning its scroll factor to zero gets
-    // it drawn by the farm camera and held still while that camera pans. The
-    // catch is that a zero-scroll object's coordinates are measured from the
-    // CAMERA VIEWPORT's edge, not the screen's — so x starts at 0 at the left of
-    // the farm half.
     // THE PAUSE KEY. No button — see CONFIG.PAUSE for why.
     //
     // Bound to the physical key rather than the character it types, so it lands
@@ -9232,7 +8773,7 @@ class GameScene extends Phaser.Scene {
         for (const seg of this.segments || []) {
             const sp = seg.tunnel && seg.tunnel.bore && seg.tunnel.bore.spoil;
             if (!sp) continue;
-            for (const e of [sp.sprayL, sp.sprayR, sp.chips, sp.dust]) {
+            for (const e of [sp.sprayL, sp.sprayR, sp.dust]) {
                 if (!e) continue;
                 if (typeof e.pause === 'function') { on ? e.pause() : e.resume(); }
                 else e.emitting = !on && e.emitting;
@@ -9312,7 +8853,6 @@ class GameScene extends Phaser.Scene {
         // Show charge-rate label above the slot
         p.chargeRateText.setText(this._bigNum(chargePerMinute)).setVisible(true);
         this._refreshTotalCharge(false);
-        p.chargeRateBolt.setVisible(true);
 
         const batteryData = {
             sprite: batterySprite, levelText,
@@ -9340,7 +8880,6 @@ class GameScene extends Phaser.Scene {
         p.slotBg.setVisible(true);
         p.slotBgFilled.setVisible(false);
         p.chargeRateText.setVisible(false);
-        p.chargeRateBolt.setVisible(false);
         this._refreshTotalCharge(false);
         this.chargingSlots[slotIndex] = null;
     }
@@ -9540,147 +9079,6 @@ class GameScene extends Phaser.Scene {
         }).setOrigin(1, 0.5).setDepth(10);
     }
 
-    // createBatteryUnlockDisplay() {
-    //     if (!CONFIG.BATTERY_UNLOCK_DISPLAY.DISPLAY_CROWN_PANEL) {
-    //         this.unlockDisplayContainer = this.unlockDisplayText = this.unlockDisplayBatteryIcon = null;
-    //         return;
-    //     }
-        
-    //     const L = this.layoutConfig;
-    //     const gridW  = this.GRID_COLS * this.CELL_SIZE + (this.GRID_COLS - 1) * this.CELL_GAP;
-    //     const gridH  = this.GRID_ROWS * this.CELL_SIZE + (this.GRID_ROWS - 1) * this.CELL_GAP;
-    //     const pad    = CONFIG.CELL.GRID_PANEL_PADDING;
-    //     const panH   = gridH + 2 * pad;
-    //     const panW   = gridW + 2 * pad;
-        
-    //     let displayY, leftEdge;
-        
-    //     if (L.isPortrait) {
-    //         // Portrait: below grid panel
-    //         const panCX  = this.gridStartX - this.CELL_SIZE / 2 + gridW / 2;
-    //         const panCY  = this.gridStartY - this.CELL_SIZE / 2 + gridH / 2;
-    //         displayY  = panCY - panH / 2 - CONFIG.BATTERY_UNLOCK_DISPLAY.VERTICAL_OFFSET;
-    //         leftEdge  = panCX - panW / 2;
-    //     } else {
-    //         // Landscape: position above grid in left half
-    //         const availHeight = L.gridHeight;
-    //         const gridTopMargin = (availHeight - gridH) / 2;
-    //         const panCY = L.gridTop + gridTopMargin + gridH / 2;
-    //         displayY = panCY - panH / 2 - CONFIG.BATTERY_UNLOCK_DISPLAY.VERTICAL_OFFSET;
-    //         leftEdge = L.gridLeft + 20;
-    //     }
-
-    //     this.unlockDisplayContainer = this.add.container(0, displayY).setDepth(10);
-    //     const elems = [];
-    //     let curX = leftEdge + CONFIG.BATTERY_UNLOCK_DISPLAY.PADDING_FROM_LEFT;
-    //     const U = CONFIG.BATTERY_UNLOCK_DISPLAY;
-
-    //     if (U.SHOW_CROWN_ICON) {
-    //         const crown = this.add.image(curX + U.CROWN_ICON_SIZE / 2, 0, 'battery_crown')
-    //             .setDisplaySize(U.CROWN_ICON_SIZE, U.CROWN_ICON_SIZE);
-    //         elems.push(crown);
-    //         curX += U.CROWN_ICON_SIZE + U.CROWN_BATTERY_SPACING;
-    //     }
-    //     if (U.SHOW_BATTERY_ICON) {
-    //         this.unlockDisplayBatteryIcon = this.add.image(
-    //             curX + U.BATTERY_ICON_SIZE / 2, 0,
-    //             `battery${getBatteryIconLevel(CONFIG.BATTERY_START_LEVEL)}`)
-    //             .setDisplaySize(U.BATTERY_ICON_SIZE, U.BATTERY_ICON_SIZE);
-    //         elems.push(this.unlockDisplayBatteryIcon);
-    //         curX += U.BATTERY_ICON_SIZE + U.BATTERY_TEXT_SPACING;
-    //     } else {
-    //         this.unlockDisplayBatteryIcon = null;
-    //     }
-    //     this.unlockDisplayText = this.add.text(curX, 0, '', {
-    //         fontFamily: CONFIG.FONT_FAMILY, fontSize: U.TEXT_SIZE,
-    //         // color: U.TEXT_COLOR, stroke: U.TEXT_STROKE_COLOR,
-    //         color: U.TEXT_COLOR, stroke: U.TEXT_STROKE_COLOR,
-    //         strokeThickness: U.TEXT_STROKE_THICKNESS,
-    //     }).setOrigin(0, 0.5);
-    //     elems.push(this.unlockDisplayText);
-    //     this.unlockDisplayContainer.add(elems);
-    //     this.updateBatteryUnlockDisplay(CONFIG.BATTERY_START_LEVEL);
-    // }
-
-    createBatteryUnlockDisplay() {
-        if (!CONFIG.BATTERY_UNLOCK_DISPLAY.DISPLAY_CROWN_PANEL) {
-            this.unlockDisplayContainer = this.unlockDisplayText = this.unlockDisplayBatteryIcon = null;
-            return;
-        }
-        
-        const L = this.layoutConfig;
-        const gridW  = this.GRID_COLS * this.CELL_SIZE + (this.GRID_COLS - 1) * this.CELL_GAP;
-        const gridH  = this.GRID_ROWS * this.CELL_SIZE + (this.GRID_ROWS - 1) * this.CELL_GAP;
-        const pad    = L.panPad;
-        const panH   = gridH + 2 * pad;
-        const panW   = gridW + 2 * pad;
-        
-        let displayY, leftEdge;
-
-         leftEdge = this.gridStartX - this.CELL_SIZE / 2 - pad;
-        const panCY = this.gridStartY - this.CELL_SIZE / 2 + gridH / 2;
-        displayY = panCY - panH / 2 - CONFIG.BATTERY_UNLOCK_DISPLAY.VERTICAL_OFFSET;
-        
-        // this.add.circle(leftEdge, displayY, 5, 0xFF0000).setDepth(9999);
-
-        // Container anchored to grid panel left edge
-        this.unlockDisplayContainer = this.add.container(leftEdge, displayY).setDepth(10);
-        
-        const U  = CONFIG.BATTERY_UNLOCK_DISPLAY;
-        const Lc = this.layoutConfig;
-        const elems = [];
-        const scaledCrownSize = Lc.crownIconSize;
-        const scaledCrownSpacing = Math.max(4, Math.round(U.CROWN_BATTERY_SPACING * (Lc.cellSize / CONFIG.CELL.SIZE)));
-        let curX = Math.max(4, Math.round(U.PADDING_FROM_LEFT * (Lc.cellSize / CONFIG.CELL.SIZE)));
-
-        if (U.SHOW_CROWN_ICON) {
-            const crown = this.add.image(curX + scaledCrownSize / 2, 0, 'battery_crown')
-                .setDisplaySize(scaledCrownSize, scaledCrownSize);
-            elems.push(crown);
-            curX += scaledCrownSize + scaledCrownSpacing;
-        }
-        if (U.SHOW_BATTERY_ICON) {
-            const scaledBattSize = Math.round(U.BATTERY_ICON_SIZE * (Lc.cellSize / CONFIG.CELL.SIZE));
-            this.unlockDisplayBatteryIcon = this.add.image(
-                curX + scaledBattSize / 2, 0,
-                `battery${getBatteryIconLevel(CONFIG.BATTERY_START_LEVEL)}`)
-                .setDisplaySize(scaledBattSize, scaledBattSize);
-            elems.push(this.unlockDisplayBatteryIcon);
-            curX += scaledBattSize + Math.max(3, Math.round(U.BATTERY_TEXT_SPACING * (Lc.cellSize / CONFIG.CELL.SIZE)));
-        } else {
-            this.unlockDisplayBatteryIcon = null;
-        }
-
-        // Text starts from right edge of last icon
-        this.unlockDisplayText = this.add.text(curX, 0, '', {
-            fontFamily: CONFIG.FONT_FAMILY, fontSize: Lc.unlockTextSize,
-            color: U.TEXT_COLOR, stroke: U.TEXT_STROKE_COLOR,
-            strokeThickness: U.TEXT_STROKE_THICKNESS,
-        }).setOrigin(0, 0.5);
-        elems.push(this.unlockDisplayText);
-
-        this.unlockDisplayContainer.add(elems);
-        this.updateBatteryUnlockDisplay(CONFIG.BATTERY_START_LEVEL);
-    }
-
-    updateBatteryUnlockDisplay(batteryLevel) {
-        if (!this.unlockDisplayContainer || !this.unlockDisplayText) return;
-        const bd = getBatteryData(batteryLevel);
-        if (!bd || !bd.displayName) return;
-        this.unlockDisplayText.setText(`${bd.displayName} Battery`);
-        if (CONFIG.BATTERY_UNLOCK_DISPLAY.SHOW_BATTERY_ICON && this.unlockDisplayBatteryIcon) {
-            this.unlockDisplayBatteryIcon.setTexture(`battery${getBatteryIconLevel(batteryLevel)}`);
-        }
-        this.highestUnlockedBatteryLevel = batteryLevel;
-    }
-
-    showBatteryUnlockDisplay(batteryLevel) {
-        if (!this.unlockDisplayContainer) return;
-        if (batteryLevel > this.highestUnlockedBatteryLevel) {
-            this.updateBatteryUnlockDisplay(batteryLevel);
-        }
-    }
-
     async spawnBatteryInGrid(row, col, level) {
         await this.assets.ensureBattery(level); // ADD THIS
         const cell = this.gridCells[row][col];
@@ -9744,81 +9142,6 @@ class GameScene extends Phaser.Scene {
             }));
         });
     }
-
-    // createButtons() {
-    //     const W = window.innerWidth || this.cameras.main.width;
-    //     const H = window.innerHeight || this.cameras.main.height;
-    //     const L = this.layoutConfig;
-        
-    //     let spawnButtonX, spawnButtonY, levelUpButtonX, levelUpButtonY;
-        
-    //     if (L.isPortrait) {
-    //         // Portrait: buttons at bottom, spawn and level-up side-by-side
-    //         spawnButtonX = W / 2;
-    //         spawnButtonY = H - CONFIG.BUTTON.BOTTOM_PADDING;
-    //         levelUpButtonX = W / 2 - CONFIG.BUTTON.BUTTON_SPACING;
-    //         levelUpButtonY = spawnButtonY;
-    //     } else {
-    //         // Landscape: buttons in left half, stacked vertically
-    //         const gridW = this.GRID_COLS * this.CELL_SIZE + (this.GRID_COLS - 1) * this.CELL_GAP;
-    //         const gridH = this.GRID_ROWS * this.CELL_SIZE + (this.GRID_ROWS - 1) * this.CELL_GAP;
-    //         const availHeight = L.gridHeight;
-    //         const gridTopMargin = (availHeight - gridH) / 2;
-    //         const gridBottomY = L.gridTop + gridTopMargin + gridH + this.CELL_SIZE / 2;
-            
-    //         spawnButtonX = L.gridLeft + L.gridWidth / 2;
-    //         spawnButtonY = gridBottomY + 30;  // Spacing below grid
-            
-    //         levelUpButtonX = spawnButtonX;
-    //         levelUpButtonY = spawnButtonY + CONFIG.BUTTON.SPAWN_HEIGHT + 30;  // Below spawn button
-    //     }
-
-    //     // Spawn button
-    //     const spawnBtn = this.add.container(spawnButtonX, spawnButtonY).setDepth(100);
-    //     const spawnBg  = this.add.image(0, 0, 'button')
-    //         .setDisplaySize(CONFIG.BUTTON.SPAWN_WIDTH + 30, CONFIG.BUTTON.SPAWN_HEIGHT + 30)
-    //         .setInteractive({ useHandCursor: true });
-    //     const iconLvl  = getBatteryIconLevel(this.spawnButtonLevel);
-    //     const spawnIcon = this.add.image(CONFIG.BUTTON.BATTERY_ICON_X, CONFIG.BUTTON.BATTERY_ICON_Y,
-    //         `battery${iconLvl}`)
-    //         .setDisplaySize(CONFIG.BUTTON.BATTERY_ICON_WIDTH, CONFIG.BUTTON.BATTERY_ICON_HEIGHT);
-    //     this.spawnButtonText = this.add.text(
-    //         CONFIG.BUTTON.COIN_TEXT_X, CONFIG.BUTTON.COIN_TEXT_Y, `${this.spawnCost}`, {
-    //             fontSize: CONFIG.BUTTON.COIN_TEXT_SIZE, fontFamily: CONFIG.FONT_FAMILY,
-    //             color: '#FFFFFF', fontStyle: 'bold',
-    //         }).setOrigin(0.5);
-    //     const spawnCoinIcon = this.add.image(CONFIG.BUTTON.COIN_ICON_X, CONFIG.BUTTON.COIN_ICON_Y, 'coin')
-    //         .setDisplaySize(CONFIG.BUTTON.COIN_ICON_WIDTH, CONFIG.BUTTON.COIN_ICON_HEIGHT);
-    //     spawnBtn.add([spawnBg, spawnIcon, this.spawnButtonText, spawnCoinIcon]);
-    //     spawnBg.on('pointerdown', () => this.spawnBattery());
-    //     this.spawnButton   = spawnBtn;
-    //     this.spawnButtonBg = spawnBg;
-    //     this.spawnButtonIcon = spawnIcon;
-
-    //     // Level-up button
-    //     const lvlBtn = this.add.container(levelUpButtonX, levelUpButtonY).setDepth(100);
-    //     const lvlBg  = this.add.rectangle(0, 0,
-    //         CONFIG.BUTTON.LEVELUP_WIDTH, CONFIG.BUTTON.LEVELUP_HEIGHT,
-    //         hexColor(CONFIG.BUTTON.LEVELUP_COLOR))
-    //         .setStrokeStyle(CONFIG.BUTTON.LEVELUP_BORDER_WIDTH,
-    //             hexColor(CONFIG.BUTTON.LEVELUP_BORDER_COLOR))
-    //         .setInteractive({ useHandCursor: true });
-    //     const lvlTxt = this.add.text(0, 0, 'LVL UP\nALL', {
-    //         fontSize: '20px', fontFamily: CONFIG.FONT_FAMILY,
-    //         align: 'center', color: '#FFFFFF', fontStyle: 'bold',
-    //     }).setOrigin(0.5);
-    //     lvlBtn.add([lvlBg, lvlTxt]);
-    //     lvlBg.on('pointerdown', () => { if (this.levelUpButtonVisible) this.levelUpAll(); });
-    //     this.levelUpButton   = lvlBtn;
-    //     this.levelUpButtonBg = lvlBg;
-    //     this.levelUpButton.setVisible(false);
-    //     this.levelUpButtonVisible = false;
-    //     this.levelUpButtonShowTime = null;
-
-    //     this.time.addEvent({
-    //         delay: 1000, callback: this.checkLevelUpTimer, callbackScope: this, loop: true,
-    //     });
-    // }
 
     async createButtons() {
         const W = this.scale.width;
@@ -10181,23 +9504,6 @@ class GameScene extends Phaser.Scene {
         this.updateSpawnButton();
     }
 
-    // updateSpawnButton() {
-    //     if (this.highestBatteryLevel >= 9) {
-    //         const nl = this.highestBatteryLevel - 7;
-    //         if (nl > this.spawnButtonLevel) {
-    //             this.spawnButtonLevel = nl;
-    //             this.spawnCost = nl * 10;
-    //             this.spawnButtonText.setText(`${this.spawnCost}`);
-    //             this.spawnButtonIcon.setTexture(`battery${getBatteryIconLevel(nl)}`);
-    //         }
-    //     }
-    //     if (this.coins < this.spawnCost) {
-    //         this.spawnButtonBg.setTint(0x888888).disableInteractive();
-    //     } else {
-    //         this.spawnButtonBg.setTint(0xffffff).setInteractive({ useHandCursor: true });
-    //     }
-    // }
-
     async updateSpawnButton() {
         if (this.highestBatteryLevel >= 9) {
             const nl = this.highestBatteryLevel - 7;
@@ -10234,7 +9540,6 @@ class GameScene extends Phaser.Scene {
             p.slotBg.setVisible(true);
             p.slotBgFilled.setVisible(false);
             p.chargeRateText.setVisible(false);
-            p.chargeRateBolt.setVisible(false);
             p.batterySprite = p.batteryLevelText = null;
         }
         if (bd.draggableBg) bd.draggableBg.setDepth(10000);
@@ -10353,7 +9658,6 @@ class GameScene extends Phaser.Scene {
             this.highestBatteryLevel = newLevel; this.updateSpawnButton();
             this.assets.prefetchBattery(newLevel + 1);
         }
-        this.showBatteryUnlockDisplay(newLevel);
         this.createMergeEffect(this.gridCells[tRow][tCol].x, this.gridCells[tRow][tCol].y);
     }
 
@@ -10380,7 +9684,6 @@ class GameScene extends Phaser.Scene {
             oldP.slotBg.setVisible(true);
             oldP.slotBgFilled.setVisible(false);
             oldP.chargeRateText.setVisible(false);
-            oldP.chargeRateBolt.setVisible(false);
             oldP.batterySprite = oldP.batteryLevelText = null;
             if (bd.draggableBg) { bd.draggableBg.destroy(); bd.draggableBg = null; }
             if (bd.sprite)    bd.sprite.destroy();
@@ -10399,7 +9702,6 @@ class GameScene extends Phaser.Scene {
             p2.slotBg.setVisible(true);
             p2.slotBgFilled.setVisible(false);
             p2.chargeRateText.setVisible(false);
-            p2.chargeRateBolt.setVisible(false);
             if (b2.draggableBg) { b2.draggableBg.destroy(); b2.draggableBg = null; }
             if (b2.sprite)    b2.sprite.destroy();
             if (b2.levelText) b2.levelText.destroy();
@@ -10420,8 +9722,8 @@ class GameScene extends Phaser.Scene {
             p2.batterySprite = p2.batteryLevelText = null;
             p1.slotBg.setVisible(true); p1.slotBgFilled.setVisible(false);
             p2.slotBg.setVisible(true); p2.slotBgFilled.setVisible(false);
-            p1.chargeRateText.setVisible(false); p1.chargeRateBolt.setVisible(false);
-            p2.chargeRateText.setVisible(false); p2.chargeRateBolt.setVisible(false);
+            p1.chargeRateText.setVisible(false);
+            p2.chargeRateText.setVisible(false);
             this.addBatteryToSlot(si1, lv2);
             this.addBatteryToSlot(si2, lv1);
         }
@@ -10440,7 +9742,7 @@ class GameScene extends Phaser.Scene {
             if (dragged.levelText) dragged.levelText.destroy();
             op.batterySprite = op.batteryLevelText = null;
             op.slotBg.setVisible(true); op.slotBgFilled.setVisible(false);
-            op.chargeRateText.setVisible(false); op.chargeRateBolt.setVisible(false);
+            op.chargeRateText.setVisible(false);
         }
         const tp = this.platforms[targetSlotIndex];
         this.chargingSlots[targetSlotIndex] = null;
@@ -10449,7 +9751,7 @@ class GameScene extends Phaser.Scene {
         if (target.levelText) target.levelText.destroy();
         tp.batterySprite = tp.batteryLevelText = null;
         tp.slotBg.setVisible(true); tp.slotBgFilled.setVisible(false);
-        tp.chargeRateText.setVisible(false); tp.chargeRateBolt.setVisible(false);
+        tp.chargeRateText.setVisible(false);
 
         const newLevel = target.level + 1;
         this.addBatteryToSlot(targetSlotIndex, newLevel);
@@ -10457,7 +9759,6 @@ class GameScene extends Phaser.Scene {
             this.highestBatteryLevel = newLevel; this.updateSpawnButton();
             this.assets.prefetchBattery(newLevel + 1);
         }
-        this.showBatteryUnlockDisplay(newLevel);
         this.createMergeEffect(tp.slotX, tp.slotY);
     }
 
@@ -10485,7 +9786,6 @@ class GameScene extends Phaser.Scene {
             p.batteryLevelText = bd.levelText;
             p.chargeRateText.setText(this._bigNum(cpm)).setVisible(true);
             this._refreshTotalCharge(false);
-            p.chargeRateBolt.setVisible(true);
         }
 
         if (bd.inGrid) {
@@ -10615,9 +9915,6 @@ class GameScene extends Phaser.Scene {
         }
         this.updateSpawnButton();
         this.assets.prefetchBattery(this.highestBatteryLevel + 1);
-        if (this.highestBatteryLevel > this.highestUnlockedBatteryLevel) {
-            this.showBatteryUnlockDisplay(this.highestBatteryLevel);
-        }
         this.tweens.killTweensOf(this.levelUpButton);
         this.levelUpButton.setScale(1).setVisible(false);
         this.levelUpButtonVisible = false;

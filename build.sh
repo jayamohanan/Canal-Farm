@@ -37,8 +37,6 @@ rsync -a \
   --exclude 'style' \
   --exclude '*.md' \
   --exclude 'sounds' \
-  --exclude 'LoadingScene.js' \
-  --exclude 'WinScene.js' \
   --exclude 'untitled folder' \
   ./ "$OUT/"
 
