@@ -112,7 +112,7 @@ var CONFIG = {
     DEBUG_LAYOUT: false,     // log the canvas size, the layout's numbers and
                              // the camera split once at startup: [buffer],
                              // [layout], [camB], and the battery sprite count
-    BATTERY_START_LEVEL: 10,
+    BATTERY_START_LEVEL: 1,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
      BACKGROUND: {
