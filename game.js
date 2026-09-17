@@ -433,104 +433,45 @@ class GameScene extends Phaser.Scene {
     // PRELOAD
     // ================================================================
     preload() {
-        this.load.on('progress', (v) => setLoadingProgress(LOAD_BOOT_SHARE + (1 - LOAD_BOOT_SHARE) * v));
+        loadMark('Phaser booted — preload starting');
+        // The loading bar. This preload runs it up to LOAD_PRELOAD_CAP. The
+        // opening view's remaining levels come in later batches, each of which
+        // restarts the loader's own 0-1 — so each takes a share of what is left
+        // instead, and the bar only ever moves forward.
+        let barFrom = LOAD_BOOT_SHARE, barTo = LOAD_PRELOAD_CAP, batch = 0;
+        this.load.on('start', () => {
+            if (batch++ === 0) return;
+            barFrom = loadingShown;
+            barTo   = loadingShown + (0.97 - loadingShown) * 0.6;
+        });
+        this.load.on('progress', (v) => setLoadingProgress(barFrom + (barTo - barFrom) * v));
+        this.load.on('complete', () => {
+            if (!loadingScreenDone) loadMark(batch <= 1 ? 'preload files downloaded' : 'more level art downloaded');
+        });
+        // Level maps and art that are queued, and those that failed. A file that
+        // fails is not retried forever: it is written off, and the level builds
+        // without it — the same as a missing file always did.
+        this._artFailed = new Set();
+        this._artQueued = new Set();
+        this.load.on('loaderror', (file) => { if (file && file.key) this._artFailed.add(file.key); });
 
-        const startData = getBatteryData(CONFIG.BATTERY_START_LEVEL);
-    if (startData) {
-        this.load.image(
-            `battery${CONFIG.BATTERY_START_LEVEL}`,
-            `graphics/battery/${startData.fileName}`
-        );
-    }
-        this.load.image('coin',          'graphics/ui/merge-grid/coin.png');
-        this.load.image('point',         'graphics/ui/merge-grid/point.png');
-        this.load.image('down_arrow',    'graphics/ui/merge-grid/down-arrow.png');
-        this.load.image('button',        'graphics/ui/merge-grid/spawn_button3.png');
-        // (grid_panel.png retired — the panel is drawn in createGrid)
-        // Grain for the cell faces: neutral grey + blurred noise, blended over
-        // the flat colour at bake time (see _makeCellTextures).
-        this.load.image('cell_noise',    'graphics/ui/merge-grid/cell_noise.webp');
-        this.load.image('bolt',          'graphics/ui/bolt.png');
-
-        // The trencher's art: two parts, each its own 5-frame animation. They
-        // are separate sprites (not one sheet) so each part's frames stay
-        // coherent on their own — see TUNNEL.TRENCHER.
-        if (CONFIG.ROAD && CONFIG.ROAD.ENABLED) {
-            const TR = CONFIG.ROAD.TUNNEL.TRENCHER;
-            // Each part's frames come from ONE sheet — a row of cells the size of
-            // that part, sliced by Phaser on load — so a loop is a single texture
-            // and a single request instead of five of each.
-            this.load.spritesheet('trencher_belt', 'graphics/trencher/belts.webp',
-                { frameWidth: TR.BELT_W, frameHeight: TR.BELT_H });
-            this.load.spritesheet('trencher_ctrl', 'graphics/trencher/control_units.webp',
-                { frameWidth: TR.CTRL_W, frameHeight: TR.CTRL_H });
-            // One shadow for the whole rig — it never animates, it just rides
-            // along under both parts.
-            this.load.image('trencher_shadow', 'graphics/trencher/shadow.webp');
-            // The torn lip of ground at the dig line: flat along the bottom (it
-            // sits ON the line), ragged along the top, so the cut never reads as
-            // a ruled edge. Two versions, alternated while the machine cuts, so
-            // the broken edge keeps changing shape instead of sliding along as
-            // one fixed silhouette.
-            const CE0 = (CONFIG.ROAD.TUNNEL || {}).CUT_EDGE || {};
-            if (CE0.FILE) {
-                this.load.spritesheet('cut_edge', CE0.FILE,
-                    { frameWidth: CE0.FRAME_W || 256, frameHeight: CE0.FRAME_H || 32 });
-            }
-            // (the side-on trencher icon is gone — it sat beside the battery
-            //  slots until the battery case took that row, and the ghost rig
-            //  inside the case says the same thing from the machine's own art)
-        }
-
-        // Lily pads: 1 and 2 are single pads, 3 and 4 are ready-made clumps.
-        // Each is placed whole and randomly rotated, so the same four images
-        // never read as the same stamp twice.
-        // The LAKE's lilies are a different thing: one composed layout, read
-        // out of its own Tiled map. The sheet is sliced into frames because the
-        // map addresses them by gid.
-        // ANIMAL PRODUCE, per species: the thing left on the grass and the icon
-        // the tally counts it with. Both are named on the species itself, so
-        // adding an animal that lays, gives or yields something needs no code —
-        // wool and honey would arrive the same way.
-        const AN = ((CONFIG.ROAD || {}).TILEMAP || {}).ANIMALS || {};
-        if ((AN.PRODUCE || {}).ENABLED !== false) {
-            for (const sp of Object.values(AN.SPECIES || {})) {
-                const P = sp.PRODUCE;
-                if (!P || !P.NAME) continue;
-                if (P.FILE) this.load.image(P.NAME, P.FILE);
-            }
-        }
-        // EVERY STANDALONE ICON, once. Two places name them — string entries in
-        // ROSTER.ICONS (a crop like corn) and a species' PRODUCE.ICON (an egg) —
-        // so they are gathered into one set first; loading a key twice only
-        // earns a warning from Phaser and a second fetch.
-        const uiIcons = new Set();
-        for (const v of Object.values((CONFIG.ROSTER || {}).ICONS || {})) {
-            if (typeof v === 'string') uiIcons.add(v);
-        }
-        for (const sp of Object.values(AN.SPECIES || {})) {
-            if (sp.PRODUCE && sp.PRODUCE.ICON) uiIcons.add(sp.PRODUCE.ICON);
-        }
-        for (const key of uiIcons) this.load.image(key, `graphics/ui/${key}.png`);
-
-        // The tally's tick.
-        const TK = (((CONFIG.ROAD || {}).TILEMAP || {}).GOALS || {}).TICK || {};
-        if (TK.FILE) this.load.image('tick', TK.FILE);
-        const LL = ((CONFIG.ROAD || {}).LAKE || {}).LILIES || {};
-        if (LL.ENABLED !== false && LL.SHEET && LL.MAP) {
-            this.load.spritesheet('lily_sheet', LL.SHEET,
-                { frameWidth: LL.FRAME || 128, frameHeight: LL.FRAME || 128 });
-            this.load.json('lily_map', LL.MAP);
+        // SHARED ART — the merge grid, the machine, the lake, the UI. The list
+        // lives in assets.js, which the build also reads to write the page's
+        // preload hints, so what is loaded here and what is hinted cannot drift.
+        for (const a of sharedAssets()) {
+            if (a.type === 'json')  this.load.json(a.key, a.url);
+            else if (a.frame)       this.load.spritesheet(a.key, a.url, a.frame);
+            else                    this.load.image(a.key, a.url);
         }
 
         // Tile map: the level layout (.tmj) plus one image per tile type.
         // The .tmj only carries the grid + tile names; the PNGs live here.
         const TM = CONFIG.ROAD && CONFIG.ROAD.TILEMAP;
         if (TM && TM.ENABLED) {
-            // Every level's map. Maps are a
-            // few KB of JSON, so loading the rotation up front costs nothing and
-            // means a level change never waits on a fetch.
-            this._levels().forEach((lv, i) => this.load.json(`level_map_${i}`, lv.FILE));
+            // Level MAPS load like level art: the opening levels' here, the rest
+            // as they come near (_queueLevelMap). In the build they arrive five
+            // to a file.
+            //
             // A .tmj that 404s leaves the cache entry simply absent, and the band
             // then falls back to procedural land — which looks exactly like a
             // level that loaded and drew nothing. Say so instead.
@@ -539,92 +480,21 @@ class GameScene extends Phaser.Scene {
                     `(${file.type}). Check the path is relative to index.html and ` +
                     `that the file is actually served.`);
             });
-            // Every tile sheet the TILESETS table names — 128px frames, dry AND
-            // water-filled tiles all in the same sheet. An entry without an IMAGE
-            // shares a texture some other entry loads, so nothing is fetched or
-            // uploaded twice.
-            const sheets = new Map();
-            for (const def of Object.values(TM.TILESETS || {})) {
-                if (def && def.IMAGE && def.KEY) sheets.set(def.KEY, def.IMAGE);
-            }
-            if (!sheets.has('canal_sheet') && TM.SHEET) sheets.set('canal_sheet', TM.SHEET);
-            if (!sheets.has('terrain') && TM.TERRAIN)    sheets.set('terrain', TM.TERRAIN);
-            for (const [key, url] of sheets) {
-                this.load.spritesheet(key, url, { frameWidth: TM.FRAME, frameHeight: TM.FRAME });
-            }
-            // Crop growth stages: one sheet per crop, a single row of
-            // CROP_STAGES uniform frames. Loaded as plain images; the frame
-            // size is derived from each at build (width / stages, full
-            // height). Every crop in the level rotation is loaded up front —
-            // they are a few hundred KB each and a level can start at any
-            // point in the cycle after a rebase.
-            // The patch of worked soil each plant stands in, drawn under it.
-            // South Lake needs nothing loaded — it is laid from the terrain
-            // sheet, which is already here. It used to be two 22x7 paintings
-            // costing about 19MB of GPU memory for something visible only while
-            // the first level is on screen.
-            // The watering splash: one row of square frames, sliced at the
-            // tilemap's own frame size since that is what the art is drawn to.
-            const FR2 = TM.FARMER || {};
-            if (FR2.ENABLED !== false) {
-                for (const n of (FR2.CYCLE || [])) {
-                    this.load.spritesheet(n, (FR2.DIR || '') + n + (FR2.EXT || '.webp'),
-                        { frameWidth: TM.FRAME, frameHeight: TM.FRAME });
-                }
-            }
-            const PR = TM.PROPS || {};
-            if (PR.ENABLED !== false) {
-                // Keyed by FILE, so two facings sharing one drawing — east and
-                // west are the same cow mirrored — load and cost it once.
-                for (const it of Object.values(PR.ITEMS || {})) {
-                    if (!it) continue;
-                    if (it.FILE)     this.load.image(it.FILE, it.FILE);
-                    if (it.EAT)      this.load.image(it.EAT,  it.EAT);
-                    if (it.FALLBACK) this.load.image(it.FALLBACK, it.FALLBACK);
-                }
-            }
-            const AN = TM.ANIMALS || {};
-            if (AN.ENABLED !== false) {
-                // Keyed by path, so facings sharing a drawing — east and west
-                // are the same animal mirrored — cost one texture between them.
-                for (const sp of Object.values(AN.SPECIES || {})) {
-                    // Sheets first — a species that packs its facings into
-                    // spritesheets names them here and its facings then point at
-                    // frame numbers instead of paths.
-                    for (const sh of Object.values(sp.SHEETS || {})) {
-                        if (!sh || !sh.FILE) continue;
-                        this.load.spritesheet(sh.FILE, sh.FILE,
-                            { frameWidth: sh.FRAME_W, frameHeight: sh.FRAME_H });
-                    }
-                    for (const f of Object.values(sp.FACINGS || {})) {
-                        if (typeof f.IDLE === 'string') this.load.image(f.IDLE, f.IDLE);
-                        if (typeof f.EAT  === 'string') this.load.image(f.EAT,  f.EAT);
-                    }
-                }
-            }
-            // Roster icons. One sheet per stretch of the run, so nothing is
-            // fetched for levels the player may never reach.
-            const RO = CONFIG.ROSTER || {};
-            if (RO.ENABLED !== false) {
-                const fs2 = RO.FRAME || 48;
-                for (const sh of (RO.SHEETS || [])) {
-                    const f = typeof sh === 'string' ? sh : sh.FILE;
-                    if (f) this.load.spritesheet(f, f, { frameWidth: fs2, frameHeight: fs2 });
-                }
-            }
-            const BW = (AN.BURROW || {});
-            if (BW.ENABLED !== false && BW.FILE) this.load.image('burrow', BW.FILE);
-            const FN = TM.FENCE || {};
-            if (FN.ENABLED !== false && FN.FILE) this.load.image('fence_pole', FN.FILE);
-            const BK = TM.BLOCK || {};
-            if (this._blocksOn() && BK.FILE) this.load.image('block', BK.FILE);
-            const PW = TM.PLANT_WATER || {};
-            if (PW.ENABLED !== false && PW.FILE) {
-                this.load.spritesheet('plant_water', PW.FILE,
-                    { frameWidth: TM.FRAME, frameHeight: TM.FRAME });
-            }
-            for (const f of this._cropList()) {
-                this.load.image(`${String(f).replace(/\.[^.]+$/, '')}_src`, this._cropFile(f));
+            // CROPS, FARMERS, PROPS AND ANIMALS are not in the shared list. Each
+            // belongs to the levels that use it and loads as those levels come
+            // near — see levelArtFor in assets.js. The first few levels' worth is
+            // queued below, the moment their maps arrive, so it still rides this
+            // loading screen.
+            // THE OPENING LEVELS' MAPS AND ART. A level's needs are read off its
+            // map, so its art is queued the moment the map (or the bundle
+            // holding it) lands — the loader takes files added mid-load, and
+            // they count toward this same loading screen. With lazy loading off,
+            // that is every level, which is the old everything-up-front
+            // behaviour.
+            const first = preloadLevelCount();
+            for (let i = 0; i < first; i++) {
+                this._queueLevelMap(i);
+                this.load.once(`filecomplete-json-${this._mapKey(i)}`, () => this._queueLevelArt(i));
             }
         }
 
@@ -634,16 +504,22 @@ class GameScene extends Phaser.Scene {
     // CREATE
     // ================================================================
     create() {
-        finishLoadingScreen();
+        loadMark('create: building the farm');
+        // The loading screen is NOT lifted here: the opening view may still be
+        // waiting on level art, and _fillViewport lifts it once that view is
+        // built. This is only the backstop for a download that never ends.
+        setTimeout(finishLoadingScreen, (CONFIG.LAZY_LEVELS || {}).SCREEN_TIMEOUT_MS || 20000);
 
-        const c = this.game.canvas;
-const dpr = window.devicePixelRatio || 1;
-console.log(
-  `[buffer] backingStore=${c.width}x${c.height} ` +          // actual render pixels (drawing buffer)
-  `cssDisplay=${c.clientWidth}x${c.clientHeight} ` +          // size shown on page (CSS px)
-  `DPR=${dpr} ` +
-  `physicalScreen=${Math.round(c.clientWidth*dpr)}x${Math.round(c.clientHeight*dpr)}`  // what the screen really has
-);
+        if (CONFIG.DEBUG_LAYOUT) {
+            const c = this.game.canvas;
+            const dpr = window.devicePixelRatio || 1;
+            console.log(
+              `[buffer] backingStore=${c.width}x${c.height} ` +          // actual render pixels (drawing buffer)
+              `cssDisplay=${c.clientWidth}x${c.clientHeight} ` +          // size shown on page (CSS px)
+              `DPR=${dpr} ` +
+              `physicalScreen=${Math.round(c.clientWidth*dpr)}x${Math.round(c.clientHeight*dpr)}`  // what the screen really has
+            );
+        }
 
         this.assets = new AssetManager(this);
         const W = this.scale.width;
@@ -656,7 +532,7 @@ console.log(
         const _cx   = L.partA.x + L.partA.width / 2;
         const _panW = this.GRID_COLS * L.cellSize + (this.GRID_COLS - 1) * L.cellGap + 2 * L.panPad;
         const _panH = this.GRID_ROWS * L.cellSize + (this.GRID_ROWS - 1) * L.cellGap + 2 * L.panPad;
-        console.log(`[layout] partA=${Math.round(L.partA.width)}x${Math.round(L.partA.height)} ` +
+        if (CONFIG.DEBUG_LAYOUT) console.log(`[layout] partA=${Math.round(L.partA.width)}x${Math.round(L.partA.height)} ` +
             `sW=${L.sW.toFixed(3)} sH=${L.sH.toFixed(3)} scale=${L.scale.toFixed(3)} cellSize=${L.cellSize.toFixed(1)} ` +
             `panel=${_panW.toFixed(0)}x${_panH.toFixed(0)} | ` +
             `coin=(${_cx.toFixed(0)},${L.coinCenterY.toFixed(0)}) ` +
@@ -1200,6 +1076,7 @@ console.log(
         // off, camB is never created and _addB degrades to a plain registry
         // push — behaviour is identical to before.
         this.segments  = [];
+        this.farmer    = null;        // the one farmer; made by the first level
         this.active    = null;        // the level being dug (not always the newest)
         // Fixed reference for every world-Y depth (see _yDepth). Set once, so
         // depths stay stable as the world scrolls and levels come and go.
@@ -1780,7 +1657,7 @@ console.log(
         if (!this.camB) return;
         const rest = this.children.list.filter((o) => !this._worldBSet.has(o));
         this.camB.ignore(rest);
-        console.log(`[camB] world=${this._worldBSet.size} ignored=${rest.length} ` +
+        if (CONFIG.DEBUG_LAYOUT) console.log(`[camB] world=${this._worldBSet.size} ignored=${rest.length} ` +
             `ids main=${this.cameras.main.id} camB=${this.camB.id} ` +
             `view=(${this.camB.x},${this.camB.y},${this.camB.width},${this.camB.height}) ` +
             `scroll=(${this.camB.scrollX},${this.camB.scrollY})`);
@@ -2816,10 +2693,10 @@ console.log(
     // the canal's centre is the seam between the two main columns. Nothing here
     // reads the live band, which by now may belong to the next level.
     //
-    // Scale is the TILES' own factor — the art is authored against a 256px
-    // two-tile canal, exactly the space two 128px canal frames occupy, so its
-    // pixel size divided by the sheet's frame size times the on-screen tile
-    // keeps it locked to the canal at any tile size.
+    // Scale comes from the tile size the art was drawn against (BLOCK.ART_TILE,
+    // 128px — a 256px two-tile canal), so its pixel size divided by that times
+    // the on-screen tile keeps it locked to the canal at any tile size. Not the
+    // sheets' FRAME: those were exported at half size, this art was not.
     _placeBlock(tn, atY) {
         const TM = CONFIG.ROAD.TILEMAP, BK = TM.BLOCK || {};
         if (!this._blocksOn() || !this.textures.exists('block')) return null;
@@ -2827,7 +2704,7 @@ console.log(
         if (!F || !F.g) return null;
         const g = F.g;
         const src = this.textures.get('block').getSourceImage();
-        const k   = g.tile / (TM.FRAME || 128);
+        const k   = g.tile / (BK.ART_TILE || 128);
         // ORIGIN is the point on the art that must land on the boundary — not
         // its centre. The wall's own waterline sits well above its bottom edge,
         // so centring it would bury the boundary somewhere inside the sprite and
@@ -3503,26 +3380,23 @@ console.log(
     }
 
     // ── The farmer ───────────────────────────────────────────────────────────
-    // One per level, wandering his crops. Built with the segment so he is torn
-    // down with it, and registered through _addB so the farm camera draws him
-    // and the UI camera does not.
+    // ONE farmer for the whole run. Every level works out where he STARTS on it
+    // when it is built; only the first level actually makes him. From then on
+    // he vanishes from each finished farm and pops up at the next one's — see
+    // _farmerMoveOn.
     //
-    // Placement is DETERMINISTIC, from the cell hash rather than Math.random():
-    // the scene is rebuilt from scratch on every window resize, and a random
-    // spawn would teleport every farmer each time the player dragged a corner.
+    // He belongs to no segment (_addB with no seg), so tearing down the level
+    // he has just left can never take him with it.
+    //
+    // Placement is DETERMINISTIC, from the cell hash rather than Math.random(),
+    // so a level's starting spot does not depend on when it happened to be built.
     _buildFarmer(seg, gTop) {
         const TM = CONFIG.ROAD.TILEMAP, F = TM.FARMER || {};
         if (F.ENABLED === false) return;
         const g = this.tileGrid;
         if (!g) return;
-        // Which farmer owns this farm — the rotation, wrapping at the end, the
-        // same way the crop cycle picks a level's plant.
-        const cycle = F.CYCLE || [];
-        if (!cycle.length) return;
-        const idx0 = this.endless ? this.endless.segIndex : 0;
-        const who  = cycle[idx0 % cycle.length];
-        if (!this.textures.exists(who)) return;
-        const walkKey = this._makeFarmerAnims(who);
+        const who = (F.CYCLE || [])[0];
+        if (!who || !this.textures.exists(who)) return;
 
         // WHERE HE STARTS: BESIDE the field, never in it.
         //
@@ -3566,42 +3440,53 @@ console.log(
         const spots = beside.length ? beside : (loose.length ? loose : bare);
         if (!spots.length) return;
 
+        // ONE STARTING SPOT PER SIDE of the canal, as well as one overall. He
+        // arrives from the farm below on whichever side he finished, and a spot
+        // on that same side means the walk up never crosses the machine's
+        // channel. The hash is the same for all three, so each is a stable pick.
         const idx = this.endless ? this.endless.segIndex : 0;
-        const pick = spots[Math.floor(this._cellHash(idx, 7, 11) * spots.length) % spots.length];
+        const hash = this._cellHash(idx, 7, 11);
+        const spotOf = (list) => {
+            if (!list.length) return null;
+            const p = list[Math.floor(hash * list.length) % list.length];
+            return { x: g.left + (p.c + 0.5) * g.tile, y: gTop + (p.r + 0.5) * g.tile,
+                     band: this._farmerBand(g, p.c) };
+        };
+        seg.farmerSpots = {
+            any:  spotOf(spots),
+            '-1': spotOf(spots.filter((p) => this._farmerBand(g, p.c) === -1)),
+            '1':  spotOf(spots.filter((p) => this._farmerBand(g, p.c) === 1)),
+        };
+        // What he needs to take this field on when he gets here.
+        seg.farmerGrid = g;
+        seg.farmerTop  = gTop;
+
+        if (this.farmer) return;            // he exists: he will pop in here
+        const pick = seg.farmerSpots.any;
+        const walkKey = this._makeFarmerAnims(who);
         const h = g.tile * (F.SIZE !== undefined ? F.SIZE : 0.95);
-        const spr = this._addB(this.add.sprite(
-                g.left + (pick.c + 0.5) * g.tile,
-                gTop + (pick.r + 0.5) * g.tile, who, F.IDLE_FRAME || 0)
+        const spr = this._addB(this.add.sprite(pick.x, pick.y, who, F.IDLE_FRAME || 0)
             .setDisplaySize(h, h)                  // frames are square
-            .setOrigin(0.5, 0.85), seg);       // stands on his feet, not his middle
+            .setOrigin(0.5, 0.85), null);      // stands on his feet, not his middle
         spr.setFrame(F.IDLE_FRAME || 0);  // idle is a still pose, not a loop
 
-        // HELD BACK UNTIL HIS LEVEL IS BEING DUG. Hidden rather than unbuilt, so
-        // his spot is still chosen from the field's own hash at build time and
-        // he cannot land somewhere else for having been made later.
-        const RV = F.REVEAL || {};
-        const waiting = RV.ENABLED !== false;
-        if (waiting) {
-            spr.setAlpha(0).setScale(spr.scaleX * (RV.POP_FROM !== undefined ? RV.POP_FROM : 0.35),
-                                     spr.scaleY * (RV.POP_FROM !== undefined ? RV.POP_FROM : 0.35));
-        }
-
-        seg.farmer = {
-            spr, gTop,
-            waiting,
-            // The size he settles at, kept from before the shrink — the pop
-            // tween has to have something to return to.
-            sx: spr.scaleX / (waiting ? (RV.POP_FROM !== undefined ? RV.POP_FROM : 0.35) : 1),
-            sy: spr.scaleY / (waiting ? (RV.POP_FROM !== undefined ? RV.POP_FROM : 0.35) : 1),
-            g,                                  // HIS level's grid, not the global one
-            walkKey,                            // his own walk animation
-            band: this._farmerBand(g, pick.c),
+        // ALREADY THERE. The first farm of a session opens with its farmer
+        // standing in it, before the machine has moved — it is his farm, and
+        // the canal is coming to him.
+        this.farmer = seg.farmer = {
+            spr, gTop, seg,
+            // The size he settles at — the pop and the breathing return to it.
+            sx: spr.scaleX,
+            sy: spr.scaleY,
+            g,                                  // the grid of the level he is ON
+            walkKey,
+            band: pick.band,
             walking: false,
             tx: spr.x, ty: spr.y,
             waitT: this._rndRange(F.PAUSE_MS || [1800, 6500]),
             row: -1,                            // forces the first depth cut
         };
-        this._cutFarmerDepth(seg.farmer);
+        this._cutFarmerDepth(this.farmer);
     }
 
     // Exactly ONE fence is see-through at a time: the one at the foot of the
@@ -4334,8 +4219,8 @@ console.log(
     // bolts AWAY when it can and sideways when a canal or the farm's edge is
     // behind it, and stays put only when boxed in on every side.
     //
-    // Only HIS OWN level's farmer: each farm has one, and a farmer two levels
-    // down has no business startling anything here.
+    // Only while the farmer is ON this farm: seg.farmer is set for the farm he
+    // is working and cleared the moment he leaves it for the next one.
     _fleeFarmer(seg, a, g, dt) {
         const sp = ((CONFIG.ROAD.TILEMAP.ANIMALS || {}).SPECIES || {})[a.species] || {};
         const F  = sp.FLEE;
@@ -4343,7 +4228,7 @@ console.log(
         if (a.fleeCd > 0) { a.fleeCd -= dt; return false; }
         if (a.flee) return false;                        // already running
         const f = seg.farmer;
-        if (!f || !f.spr || !f.spr.scene || f.waiting) return false;
+        if (!f || !f.spr || !f.spr.scene || f.travel) return false;
         const dx = a.spr.x - f.spr.x, dy = a.spr.y - f.spr.y;
         const d  = Math.hypot(dx, dy);
         if (d > (F.RADIUS !== undefined ? F.RADIUS : 1.5) * g.tile) return false;
@@ -4666,8 +4551,11 @@ console.log(
     _cheerFarmer(seg) {
         const F = CONFIG.ROAD.TILEMAP.FARMER || {}, C = F.CHEER || {};
         const f = seg && seg.farmer;
-        if (C.ENABLED === false || !f || !f.spr || !f.spr.scene) return;
-        if (f.waiting || f.cheering) return;      // not on screen yet, or already at it
+        if (!f || !f.spr || !f.spr.scene) return;
+        if (f.cheering || f.travel) return;       // already at it, or between farms
+        // NO CHEER when it is switched off, or when the view has already left
+        // for the next farm — he should be there, not jumping here off screen.
+        if (C.ENABLED === false || this._viewPast(seg)) { this._farmerMoveOn(seg, f); return; }
         const spr = f.spr;
         // The size he rests at. Taken from the record, not from the sprite: mid
         // walk-cycle he may be part way through some other tween.
@@ -4676,6 +4564,7 @@ console.log(
         const tile = f.g ? f.g.tile : 0;
 
         f.cheering = true;
+        f.cheerY   = y0;                          // where to put him if it is cut short
         f.walking  = false;                       // he stops where he stands
         if (spr.anims) spr.anims.stop();
         f.striding = false;              // whatever the legs were doing, they stop
@@ -4712,18 +4601,132 @@ console.log(
                               ? (C.GAP_MS !== undefined ? C.GAP_MS : 60) : 0 });
         }
 
-        this.tweens.chain({
+        f.cheerChain = this.tweens.chain({
             targets: spr, tweens,
             onComplete: () => {
-                if (!spr.scene) return;
+                f.cheerChain = null;
+                if (!spr.scene || !f.cheering) return;
                 spr.setScale(sx, sy).setPosition(spr.x, y0);
                 f.cheering = false;
-                // Back to wandering, after a beat — walking off the instant he
-                // lands would undo the pause the jump just created.
                 f.waitT = this._rndRange(F.PAUSE_MS || [1800, 6500]);
-                this._sendFarmerHome(seg, f);
+                this._farmerMoveOn(seg, f);
             },
         });
+    }
+
+    // Cut a cheer off wherever it has got to and put him back on his feet at
+    // his own size — the chain would otherwise leave him mid-air or squashed.
+    _stopCheer(f) {
+        if (!f || !f.cheering) return;
+        f.cheering = false;
+        if (f.cheerChain) { f.cheerChain.stop(); f.cheerChain = null; }
+        if (!f.spr || !f.spr.scene) return;
+        this.tweens.killTweensOf(f.spr);
+        f.spr.setScale(f.sx, f.sy);
+        if (f.cheerY !== undefined) f.spr.y = f.cheerY;
+    }
+
+    // HAS THE VIEW MOVED ON PAST THIS LEVEL? True once the camera's subject is a
+    // later level — the moment the pan to the next farm begins.
+    _viewPast(seg) {
+        const cam = this.endless && this.endless.camSeg;
+        return !!(cam && seg && cam !== seg && (cam.levelIndex || 0) > (seg.levelIndex || 0));
+    }
+
+    // ── HIS FIELD IS DONE: ON TO THE NEXT ONE ────────────────────────────────
+    // Paid for this farm, then gone: he shrinks away where he stands and pops
+    // up at the next level's starting spot, on his own side of the canal —
+    // the same entrance he makes on level 1. Not walked: a walk between farms
+    // crosses ditches and fences and takes longer than the view gives him.
+    //
+    // THE NEXT LEVEL MAY NOT BE BUILT YET — its art can still be downloading.
+    // Then he stays where he is, and _updateFarmers asks again every frame
+    // until it is, so he is never stranded on a finished farm for good.
+    _farmerMoveOn(seg, f) {
+        const F = CONFIG.ROAD.TILEMAP.FARMER || {}, T = F.TRAVEL || {};
+        if (!f || f.travel || !f.spr || !f.spr.scene) return;
+        this._farmerPays(seg, f);
+        // By LEVEL NUMBER, not position in the list: the farm he is on may
+        // already have been torn down below the view while he waited.
+        const from = (seg && seg.levelIndex) || 0;
+        const next = this.segments.find((s) => (s.levelIndex || 0) > from && s.farmerSpots);
+        const band = this._farmerBand(f.g, Math.floor((f.spr.x - f.g.left) / f.g.tile));
+        const spot = next && (next.farmerSpots[band] || next.farmerSpots.any);
+        if (!spot) { f.moveOnFrom = seg; return; }
+        f.moveOnFrom = null;
+
+        this._stopCheer(f);
+        if (seg && seg.farmer === f) seg.farmer = null;   // this farm is done with him
+        f.harvesting = false;
+        f.walking    = false;
+        f.crossTo    = null;
+        f.hopT       = 0;
+        // In transit: the tweens below own him until he lands.
+        const tr = f.travel = { to: next, x: spot.x, y: spot.y, band: spot.band };
+
+        // OUT HERE — shrink and fade where he stands, the pop run backwards.
+        const RV = F.REVEAL || {};
+        const from0 = RV.POP_FROM !== undefined ? RV.POP_FROM : 0.35;
+        const fade  = RV.FADE_MS || 380;
+        const spr = f.spr;
+        this._farmerStride(f, 0);
+        this.tweens.add({
+            targets: spr, alpha: 0, scaleX: f.sx * from0, scaleY: f.sy * from0,
+            duration: fade * 0.6, ease: 'Sine.easeIn',
+            delay: T.DELAY_MS !== undefined ? T.DELAY_MS : 250,
+            onComplete: () => {
+                if (!spr.scene || f.travel !== tr) return;
+                // IN THERE — after a moment with no farmer anywhere, so the two
+                // read as leaving and arriving rather than one sprite sliding.
+                spr.setPosition(tr.x, tr.y);
+                this._farmerArrive(f);
+                const gap = T.GAP_MS !== undefined ? T.GAP_MS : 150;
+                this.tweens.add({ targets: spr, scaleX: f.sx, scaleY: f.sy, delay: gap,
+                    duration: fade, ease: RV.POP_EASE || 'Back.easeOut' });
+                this.tweens.add({ targets: spr, alpha: 1, delay: gap,
+                    duration: fade * 0.6, ease: 'Sine.easeOut' });
+            },
+        });
+    }
+
+    // He is on the new farm: take it on as his own, from a standstill.
+    _farmerArrive(f) {
+        const F = CONFIG.ROAD.TILEMAP.FARMER || {};
+        const tr = f.travel, to = tr.to;
+        f.travel = null;
+        this._farmerStride(f, 0);
+        f.seg  = to;
+        to.farmer = f;
+        f.g    = to.farmerGrid;
+        f.gTop = to.farmerTop;
+        f.band = tr.band;
+        f.paid = false;
+        f.harvesting = false;
+        f.cheering   = false;
+        f.walking    = false;
+        f.crossTo    = null;
+        f.stuck      = false;
+        f.hopT       = 0;
+        f.cell       = null;
+        f.row        = -1;                        // forces the depth cut
+        f.tx = f.spr.x; f.ty = f.spr.y;
+        f.waitT = this._rndRange(F.PAUSE_MS || [1800, 6500]);
+        this._cutFarmerDepth(f);
+        this._faceCrops(f);
+        // A plant that finished growing before he got here asked for a harvest
+        // with nobody on the farm to start it. Start it now.
+        if ((to.crops || []).some((cr) => cr.done)) this._beginHarvest(to);
+    }
+
+    // THE VIEW IS LEAVING FOR `seg`. If he is still on the farm below — done
+    // with it, cheering or about to — he goes now rather than being missing
+    // when the new farm comes into view. Still gathering, he finishes first:
+    // the view does not move on until the field is picked, so that is brief.
+    _farmerFocus(seg) {
+        const f = this.farmer;
+        if (!f || f.travel || !f.seg || !seg || f.seg === seg || f.harvesting) return;
+        if ((f.seg.levelIndex || 0) >= (seg.levelIndex || 0)) return;
+        this._farmerMoveOn(f.seg, f);
     }
 
     // GATHER THE FIELD. Every plant is at its last stage by the time this runs,
@@ -5364,32 +5367,6 @@ console.log(
         });
     }
 
-    // HIS DAY IS OVER. Point him at the nearer side of the map and set him
-    // walking; _walkFarmerOff takes it from there.
-    //
-    // OUT THE SIDE HE IS ON, which is also the nearer one — he has just finished
-    // gathering that half, so it is the short way out and it never takes him
-    // back across the channel he only just crossed.
-    _sendFarmerHome(seg, f) {
-        const F = CONFIG.ROAD.TILEMAP.FARMER || {}, L = F.LEAVE || {};
-        if (!f || f.leaving || !f.spr || !f.spr.scene) return;
-        this._farmerPays(seg, f);
-        if (L.ENABLED === false) return;
-        const g = f.g;
-        const band = this._farmerBand(g, Math.floor((f.spr.x - g.left) / g.tile));
-        // In the canal's own corridor he belongs to neither side, so the nearer
-        // edge decides.
-        f.leaveDir = band ? Math.sign(band)
-                          : (f.spr.x - g.left < g.w / 2 ? -1 : 1);
-        this.time.delayedCall(L.DELAY_MS !== undefined ? L.DELAY_MS : 700, () => {
-            if (!f.spr || !f.spr.scene) return;
-            f.leaving   = true;
-            f.walking   = false;
-            f.harvesting = false;
-            f.crossTo   = null;
-        });
-    }
-
     // SETTLING UP. Coins fly from the farmer to the counter for the field he
     // just gathered.
     //
@@ -5411,29 +5388,6 @@ console.log(
         const at = this._worldToUI(f.spr.x, f.spr.y);
         this.animateCoinReward(at.x, at.y, amount,
             P.DELAY_MS !== undefined ? P.DELAY_MS : 250);
-    }
-
-    // Walk him out of the map and take him off it.
-    //
-    // Straight out sideways, no band rules and no crop rules: he is done with
-    // the field and everything those rules protect is behind him.
-    _walkFarmerOff(seg, f, dt) {
-        const F = CONFIG.ROAD.TILEMAP.FARMER || {}, L = F.LEAVE || {};
-        const g = f.g, spr = f.spr;
-        const step = (F.SPEED || 1.1) * (L.SPEED_MUL !== undefined ? L.SPEED_MUL : 1.35)
-                   * g.tile * dt;
-        spr.x += f.leaveDir * step;
-        spr.setFlipX(f.leaveDir < 0);
-        this._farmerStride(f, step);
-        this._cutFarmerDepth(f);
-        // GONE. A margin past the edge, so he is not deleted while a sliver of
-        // him is still on screen.
-        const m = (L.MARGIN !== undefined ? L.MARGIN : 1.5) * g.tile;
-        const out = f.leaveDir < 0 ? g.left - m : g.left + g.w + m;
-        if ((f.leaveDir < 0 && spr.x <= out) || (f.leaveDir > 0 && spr.x >= out)) {
-            spr.destroy();
-            seg.farmer = null;
-        }
     }
 
     // A STANDING FARMER STILL BREATHES.
@@ -5760,43 +5714,27 @@ console.log(
         const TM = CONFIG.ROAD.TILEMAP, F = TM.FARMER || {};
         if (F.ENABLED === false) return;
         const dt = Math.min(dtMs, 100) / 1000;
+        // Done with a farm whose next level was not built yet: ask again. Asked
+        // here rather than in the per-level loop below, because the farm he is
+        // waiting on may already have been torn down.
+        const fm = this.farmer;
+        if (fm && fm.spr && fm.spr.scene && !fm.travel && fm.moveOnFrom) {
+            this._farmerMoveOn(fm.moveOnFrom, fm);
+        }
         for (const seg of this.segments) {
             const f = seg.farmer;
-            if (!f || !f.spr || !f.spr.scene || !f.g) continue;
-
-            // NOT YET IN THE FIELD. He waits for his own level's blade, never
-            // for this.tunnel: levels are built ahead, so the global one belongs
-            // to whichever farm is being dug now and would show every farmer at
-            // once the moment the first was.
-            if (f.waiting) {
-                const RV = F.REVEAL || {};
-                const tn = seg.tunnel;
-                const at = (RV.AFTER_TILES !== undefined ? RV.AFTER_TILES : 0.5) * f.g.tile;
-                if (!tn || (tn.progressPx || 0) <= at) continue;
-                f.waiting = false;
-                // Scale and alpha on separate curves, as the animals walk on:
-                // the size overshoots and settles, which is what makes it a pop,
-                // while the fade stays even — an overshooting fade would flash
-                // past full opacity.
-                this.tweens.add({ targets: f.spr, scaleX: f.sx, scaleY: f.sy,
-                    duration: RV.FADE_MS || 380, ease: RV.POP_EASE || 'Back.easeOut' });
-                this.tweens.add({ targets: f.spr, alpha: 1,
-                    duration: (RV.FADE_MS || 380) * 0.6, ease: 'Sine.easeOut' });
-            }
+            if (!f || !f.spr || !f.spr.scene || !f.g || f.travel) continue;
 
             // BREATHING, whenever nothing else owns his size. The tween test is
-            // what keeps it out of the way of the walk-on pop, the cheer, the
-            // leap and the harvest lift — each of those is animating scale, and
-            // two things writing one property fight every frame.
-            if (!f.waiting && !f.cheering && !f.striding && !(f.hopT > 0) &&
+            // what keeps it out of the way of the pop-in, the cheer, the leap
+            // and the harvest lift — each of those is animating scale, and two
+            // things writing one property fight every frame.
+            if (!f.cheering && !f.striding && !(f.hopT > 0) &&
                     !this.tweens.isTweening(f.spr)) {
                 this._breatheFarmer(f, dtMs);
             }
 
             if (f.cheering) continue;      // jumping; the chain owns him
-
-            // ON HIS WAY OUT. Nothing else applies any more.
-            if (f.leaving) { this._walkFarmerOff(seg, f, dt); continue; }
 
             // GATHERING. Owns his movement outright until the field is picked.
             if (f.harvesting) { this._runHarvest(seg, f, dt); continue; }
@@ -6089,16 +6027,122 @@ console.log(
         return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
     }
 
-    // The crop art rotation, in level order. Falls back to the single CROP so
-    // a config with no cycle still behaves exactly as before.
-    // The level rotation as typed in config: one entry per level, in play order.
-    // Falls back to the single FILE so a config without LEVELS still runs.
-    _levels() {
-        const TM = CONFIG.ROAD && CONFIG.ROAD.TILEMAP;
-        if (!TM) return [];
-        if (Array.isArray(TM.LEVELS) && TM.LEVELS.length) return TM.LEVELS;
-        return TM.FILE ? [{ FILE: TM.FILE }] : [];
+    // ================================================================
+    // LEVEL ART — loaded as levels come near
+    // ================================================================
+    // WHAT a level needs is decided in assets.js (levelArtFor), from the level's
+    // entry and its map — the build runs the same rules to write the page's
+    // preload hints. What is here is only WHEN: fetched as levels come near,
+    // and waited for before a level is built.
+
+    // Every texture level `index` draws that is not shared: [{ type, key, url,
+    // frame }]. Cached once its map is in hand; before that there is nothing to
+    // read, so it answers empty and is asked again.
+    _levelArt(index) {
+        const cache = this._artOf || (this._artOf = new Map());
+        if (cache.has(index)) return cache.get(index);
+        const out = levelArtFor(index, this._levelMap(index));
+        if (!out) return [];
+        cache.set(index, out);
+        return out;
     }
+
+    // ── LEVEL MAPS: one file each, or five to a bundle ───────────────────────
+    // In the working folder every map is its own file. The BUILD packs them
+    // five to a file in running order (build.sh) and lists the bundles in
+    // LEVEL_DATA.MAP_BUNDLES. A bundle is split back into the same
+    // one-map-per-level cache entries the moment it lands, so nothing past
+    // these three methods knows which kind of build it is running in.
+    _mapBundles() {
+        const MB = (CONFIG.ROAD.TILEMAP || {}).MAP_BUNDLES;
+        return MB && MB.SIZE > 0 && Array.isArray(MB.FILES) && MB.FILES.length ? MB : null;
+    }
+
+    // The loader key that brings level `index`'s map: its own file, or its bundle.
+    _mapKey(index) {
+        const n = this._levels().length || 1, w = index % n;
+        const MB = this._mapBundles();
+        return MB ? `map_bundle_${Math.floor(w / MB.SIZE)}` : `level_map_${w}`;
+    }
+
+    // Is level `index`'s map in hand — or never coming, because its file failed?
+    _levelMapReady(index) {
+        const n = this._levels().length;
+        if (!n) return true;
+        return this.cache.json.exists(`level_map_${index % n}`) || this._artFailed.has(this._mapKey(index));
+    }
+
+    // Put level `index`'s map on the loader, unless it is in hand or on its
+    // way. Returns how many files it added: 0 or 1.
+    _queueLevelMap(index) {
+        if (this._levelMapReady(index)) return 0;
+        const key = this._mapKey(index);
+        if (this._artQueued.has(key)) return 0;
+        const ls = this._levels(), w = index % ls.length;
+        const MB = this._mapBundles();
+        const url = MB ? MB.FILES[Math.floor(w / MB.SIZE)] : ls[w].FILE;
+        if (!url) { this._artFailed.add(key); return 0; }   // no such bundle: never coming
+        this._artQueued.add(key);
+        if (MB) {
+            const b = Math.floor(w / MB.SIZE);
+            this.load.once(`filecomplete-json-${key}`, () => this._unpackMapBundle(b));
+        }
+        this.load.json(key, url);
+        return 1;
+    }
+
+    // A bundle has landed: file each map under its level's own key. Keyed in
+    // the bundle by the map's path, so a map two levels share is stored once.
+    _unpackMapBundle(b) {
+        const MB = this._mapBundles(), data = this.cache.json.get(`map_bundle_${b}`);
+        if (!MB || !data) return;
+        const ls = this._levels();
+        for (let w = b * MB.SIZE; w < Math.min(ls.length, (b + 1) * MB.SIZE); w++) {
+            const map = data[ls[w].FILE];
+            if (map && !this.cache.json.exists(`level_map_${w}`)) this.cache.json.add(`level_map_${w}`, map);
+        }
+    }
+
+    // Is everything level `index` draws in hand? Its map first — without it
+    // there is no knowing what else it needs. A file that FAILED counts as in
+    // hand: the level builds without it, exactly as a missing file always did,
+    // rather than waiting on something that is never coming.
+    _levelArtReady(index) {
+        if (!this._levelMapReady(index)) return false;
+        return this._levelArt(index).every((a) =>
+            this.textures.exists(a.key) || this._artFailed.has(a.key));
+    }
+
+    // Put level `index`'s missing art on the loader — or, if its map has not
+    // arrived, the map, since the art cannot be known before it. Safe to call as
+    // often as anyone likes: a file already loaded, failed or on its way is
+    // skipped, so nothing is ever fetched twice. Returns how many files it added.
+    _queueLevelArt(index) {
+        if (!this._levelMapReady(index)) return this._queueLevelMap(index);
+        let added = 0;
+        for (const a of this._levelArt(index)) {
+            if (this.textures.exists(a.key) || this._artFailed.has(a.key) || this._artQueued.has(a.key)) continue;
+            this._artQueued.add(a.key);
+            if (a.frame) this.load.spritesheet(a.key, a.url, a.frame);
+            else         this.load.image(a.key, a.url);
+            added++;
+        }
+        return added;
+    }
+
+    // Start fetching level `from` and the AHEAD levels after it. The loader may
+    // already be busy — a battery, or the batch before — and files added then
+    // simply join the run in progress.
+    _requestLevelArt(from) {
+        const LZ = CONFIG.LAZY_LEVELS || {};
+        const n = Math.max(1, LZ.AHEAD !== undefined ? LZ.AHEAD : 3);
+        let added = 0;
+        for (let i = from; i < from + n; i++) added += this._queueLevelArt(i);
+        if (added && !this.load.isLoading()) this.load.start();
+    }
+
+    // The level rotation as typed in config — see levelList in assets.js.
+    _levels() { return levelList(); }
 
     // The level being built now — the rotation wraps, so level 4 is level 1's
     // map again with whatever crop the crop cycle has reached.
@@ -6127,44 +6171,13 @@ console.log(
         return null;                   // this map paints no markers
     }
 
-    // The rotation exactly as typed in config: FILE NAMES, in play order. Add a
-    // sheet to graphics/crops/ and its file name to that list — nothing else
-    // needs to know. Put a new one first to see it on level 1.
-    _cropList() {
-        const TM = CONFIG.ROAD && CONFIG.ROAD.TILEMAP;
-        if (!TM) return [];
-        // DERIVED FROM THE LEVELS, not a list of its own. Every crop any level
-        // names, once — which is exactly the set that has to be loaded, so a
-        // sheet nobody grows is never fetched and a level can never name a crop
-        // that was left out of a parallel list.
-        const out = [];
-        for (const lv of this._levels()) {
-            if (!lv) continue;
-            // Every crop the level names, not just its own: a mixed field needs
-            // all of its sheets loaded, and a crop introduced on level 2 is
-            // still growing on level 5.
-            const names = lv.CROPS ? Object.keys(lv.CROPS).map((k) => lv.CROPS[k])
-                                   : [lv.CROP];
-            for (const n of names) if (n && !out.includes(n)) out.push(n);
-        }
-        if (out.length) return out;
-        return TM.CROP ? [TM.CROP] : [];
-    }
+    // Every crop any level names — see cropListOf in assets.js.
+    _cropList() { return cropListOf(); }
 
     // The same list as texture keys — the file name without its extension. A
     // bare name (no extension) is taken as a .png, so old entries still work.
     _cropCycle() {
         return this._cropList().map((f) => String(f).replace(/\.[^.]+$/, ''));
-    }
-
-    // Where a crop's sheet lives.
-    _cropFile(entry) {
-        const TM = CONFIG.ROAD.TILEMAP;
-        const f  = String(entry);
-        // Crops are all one format now, so the list carries plain NAMES and the
-        // extension comes from config. An entry that does name its own extension
-        // is still honoured, so a one-off in another format costs nothing.
-        return `${TM.CROP_DIR || 'graphics/crops/'}${/\.[^.]+$/.test(f) ? f : f + (TM.CROP_EXT || '.webp')}`;
     }
 
     // WHAT A LEVEL GROWS. Two shapes, because a level may or may not have been
@@ -9176,9 +9189,15 @@ console.log(
     // rather than a single field with nothing beyond it.
     //
     // Only the LIVE level has a machine; the ones built ahead are landscape.
+    //
+    // A level whose art has not arrived is NOT built half-drawn: its art is
+    // fetched and the fill stops there. This runs every frame, so it picks up
+    // again on its own the frame the files land. Every other way out means the
+    // world is as built as it is going to get, which is what the loading screen
+    // waits for.
     _fillViewport() {
         const E = this.endless;
-        if (!E || !this.camB || !this.tileGrid) return;
+        if (!E || !this.camB || !this.tileGrid) { finishLoadingScreen(); return; }
         const C = CONFIG.ROAD.ENDLESS || {};
         const ahead = (C.FILL_AHEAD !== undefined ? C.FILL_AHEAD : 0.75) * this.camB.height;
         // Measured from the CAMERA or from the MACHINE, whichever has got
@@ -9191,12 +9210,27 @@ console.log(
         // Bounded: a map with no height would otherwise spin here forever.
         for (let guard = 0; guard < 16; guard++) {
             const top = this.segments[this.segments.length - 1];
-            if (!top || top.top === undefined) return;
-            if (top.top <= from - ahead) return;
+            if (!top || top.top === undefined) break;
+            if (top.top <= from - ahead) break;
+            if (!this._levelArtReady(E.segIndex + 1)) {
+                if (!loadingScreenDone && this._waitMarked !== E.segIndex + 1) {
+                    this._waitMarked = E.segIndex + 1;
+                    loadMark(`opening view waiting on level ${E.segIndex + 2}'s art`);
+                }
+                this._requestLevelArt(E.segIndex + 1);
+                return;                                   // not settled: still coming
+            }
+            // A sheet that arrived since create has not had its gutters added.
+            // Already-extruded sheets are skipped, so this costs nothing twice.
+            this._extrudeTileSheets();
             E.segIndex++;
             const made = this._buildSegment(top.top);
-            if (!made || made.top === undefined || made.top >= top.top) return;  // no progress
+            // Keep the levels after it downloading, so the next one is in hand
+            // long before the view needs it.
+            this._requestLevelArt(E.segIndex + 1);
+            if (!made || made.top === undefined || made.top >= top.top) break;  // no progress
         }
+        finishLoadingScreen();
     }
 
     // Hand the machine to the level above: it is already built and standing
@@ -9329,6 +9363,8 @@ console.log(
     // is one eased climb with the rig parked.
     _panToLevel(seg, done) {
         const C = CONFIG.ROAD.ENDLESS || {}, E = this.endless;
+        // The view is leaving: the farmer goes too, if he has not already.
+        this._farmerFocus(seg);
         if (C.FOCUS_NEXT === false || !E || !this.camB || !seg || seg.midY === undefined) {
             done(); return;
         }
@@ -10953,6 +10989,7 @@ console.log(
         // are stopped separately in _setPaused — returning here alone would
         // freeze the simulation while leaving lilies drifting and the belt
         // turning, which reads as a bug rather than a pause.
+        if (!this._firstFrameMarked) { this._firstFrameMarked = true; loadMark('first frame — create() finished'); }
         if (this.gamePaused) return;
         // Drive the boring machine — and the water it leaves behind.
         if (this.tunnel) this._updateTunnel(time);
@@ -11044,6 +11081,22 @@ const config = {
         expandParent: true,
     },
     render: { antialias: true, pixelArt: false, roundPixels: false },
+    // HOW MANY FILES DOWNLOAD AT ONCE. Phaser's own default is 32 — except on
+    // Android, where it drops to 6, a guard for old Android browsers that
+    // choked on many requests at once. Modern Android Chrome does not, and on a
+    // server that takes seconds to answer each file, 6 slots turned the opening
+    // load into queues: every file waited for one of six to come free, and the
+    // preload ran in rounds. Poki's Inspector reports itself as an Android
+    // phone, so it measured exactly that. Set here, it is 32 everywhere.
+    //
+    // IMAGES AS PLAIN <img> LOADS, not XHR. The build's index.html carries
+    // <link rel="preload" as="image"> hints so the browser starts fetching the
+    // opening art as soon as the page arrives. The browser only hands that early
+    // download to a request of the SAME kind — an image load, CORS-anonymous —
+    // and Phaser's default XHR fetch is a different kind, so it would download
+    // every hinted image a second time. crossOrigin matches the hints'
+    // crossorigin="anonymous"; the files are same-origin, so it costs nothing.
+    loader: { maxParallelDownloads: 32, imageLoadType: 'HTMLImageElement', crossOrigin: 'anonymous' },
     callbacks: {
         // Runs after the canvas exists, before the first render: lock in exact
         // device-pixel sizing and keep it in sync on window resize / rotation.
@@ -11076,11 +11129,49 @@ function waitForFont() {
 // font) takes the first sliver of the bar; the asset loader fills the rest.
 // Everything here is a no-op once the screen is gone — the scene restarts on a
 // resize, and a second preload must not bring it back.
-const LOAD_BOOT_SHARE = 0.1;
+// ── Load timing ──────────────────────────────────────────────────────────────
+// Where the time before play goes, stage by stage, printed as [timing] lines.
+// performance.now() counts from the moment the page was opened, so each mark's
+// first number is "ms since page open" — the same clock Poki's loading time
+// runs on. The "+" figure is the gap since the mark before; the boot checks run
+// side by side, so for those read the first number, not the gap.
+const loadMarks = [];
+function loadMark(label) {
+    if (!CONFIG.DEBUG_LOAD_TIMING || typeof performance === 'undefined') return;
+    const t = Math.round(performance.now());
+    const prev = loadMarks.length ? loadMarks[loadMarks.length - 1].t : 0;
+    loadMarks.push({ label, t });
+    console.log(`[timing] ${String(t).padStart(6)}ms  (+${t - prev}ms)  ${label}`);
+}
+// Once, when loading finishes: the page's own download, then the network
+// requests that took longest. A request's time includes waiting its turn, so a
+// long list of files all starting late points at queuing, not at size.
+function loadTimingReport() {
+    if (!CONFIG.DEBUG_LOAD_TIMING || typeof performance === 'undefined' || !performance.getEntriesByType) return;
+    const nav = performance.getEntriesByType('navigation')[0];
+    if (nav) {
+        console.log(`[timing] page HTML: request sent at ${Math.round(nav.requestStart)}ms, ` +
+            `downloaded by ${Math.round(nav.responseEnd)}ms, parsed by ${Math.round(nav.domContentLoadedEventEnd)}ms`);
+    }
+    const res = performance.getEntriesByType('resource');
+    const short = (u) => String(u).split('?')[0].split('/').slice(-2).join('/');
+    const kb = (r) => r.transferSize ? `${(r.transferSize / 1024).toFixed(0)}KB` : 'size n/a';
+    console.log(`[timing] ${res.length} requests before loading finished. Slowest:`);
+    for (const r of [...res].sort((a, b) => b.duration - a.duration).slice(0, 10)) {
+        console.log(`[timing]    ${String(Math.round(r.duration)).padStart(5)}ms  ` +
+            `from ${Math.round(r.startTime)}ms to ${Math.round(r.responseEnd)}ms  ${kb(r)}  ${short(r.name)}`);
+    }
+}
+
+const LOAD_BOOT_SHARE  = 0.1;
+const LOAD_PRELOAD_CAP = 0.85;   // the rest is the opening view's later batches
 let loadingScreenDone = false;
+let loadingShown = 0;            // never goes back: a batch added mid-load grows
+                                 // the total, which would otherwise pull it back
 function setLoadingProgress(v) {
     if (loadingScreenDone || typeof document === 'undefined') return;
-    const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+    loadingShown = Math.max(loadingShown, Math.max(0, Math.min(1, v)));
+    const pct = Math.round(loadingShown * 100);
     const fill = document.getElementById('loading-fill');
     const label = document.getElementById('loading-percent');
     const screen = document.getElementById('loading-screen');
@@ -11090,6 +11181,8 @@ function setLoadingProgress(v) {
 }
 function finishLoadingScreen() {
     if (loadingScreenDone) return;
+    loadMark('opening view built — LOADING FINISHED (this is what Poki times)');
+    loadTimingReport();
     setLoadingProgress(1);
     loadingScreenDone = true;
     // There is no menu: the farm is playable the moment it is built.
@@ -11127,17 +11220,30 @@ function pokiGameplay(on) {
 function initPoki() {
     if (typeof window === 'undefined' || !window.PokiSDK) {
         console.warn('[poki] SDK not present — running without it');
+        loadMark('Poki SDK not present');
         return Promise.resolve();
     }
+    let settled = false;
     const init = window.PokiSDK.init()
-        .then(() => { pokiReady = true; })
-        .catch((e) => { console.warn('[poki] init failed — running without it', e); });
-    return Promise.race([init, new Promise((r) => setTimeout(r, 4000))]);
+        .then(() => { pokiReady = true; loadMark('Poki SDK ready'); })
+        .catch((e) => { console.warn('[poki] init failed — running without it', e); loadMark('Poki SDK init FAILED'); })
+        .finally(() => { settled = true; });
+    const cap = new Promise((r) => setTimeout(() => {
+        if (!settled) loadMark('Poki SDK still not ready after 4000ms — TIMED OUT, carrying on');
+        r();
+    }, 4000));
+    return Promise.race([init, cap]);
 }
 
 if (typeof window !== 'undefined' && !window.__LEVEL_VIEWER__) {
+    loadMark('game script running (page, Phaser and Poki SDK scripts are in)');
     setLoadingProgress(LOAD_BOOT_SHARE * 0.4);
-    Promise.all([initBatteryImagePaths(), waitForFont(), initPoki()]).then(() => {
+    Promise.all([
+        Promise.resolve(initBatteryImagePaths()).then(() => loadMark('battery list ready')),
+        waitForFont().then(() => loadMark('font ready')),
+        initPoki(),
+    ]).then(() => {
+        loadMark('boot checks done — starting Phaser');
         setLoadingProgress(LOAD_BOOT_SHARE);
         new Phaser.Game(config);
     });

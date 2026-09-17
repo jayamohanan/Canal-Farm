@@ -94,21 +94,24 @@ var CONFIG = {
         WIDTH:   1,        // px @ platformScale
         DEPTH:   9000,     // above everything the farm draws
     },
-    DEBUG_POWER: true,       // log what the machine is actually delivering, once
+    DEBUG_POWER: false,       // log what the machine is actually delivering, once
                              // a second while it is cutting: hardness of the row
                              // it is in, power from the slots, the two speed
                              // limits, which one is binding, and the strain.
                              // This is the readout for tuning the whole feature
-    DEBUG_MAP:  true,        // report, per band, exactly what reached the
+    DEBUG_MAP:  false,        // report, per band, exactly what reached the
                              // renderer from the level's .tmj: which layers were
                              // found and whether they carry anything, which
                              // tilesets resolved to art, which gids could not be
                              // drawn, and how much of the ground on screen is
                              // the MAP versus the filler strip. Errors and
                              // warnings below are logged whatever this is set to
-    DEBUG_PERF: true,        // log object / tween / timer / texture counts each
+    DEBUG_PERF: false,        // log object / tween / timer / texture counts each
                              // time the world rebases (once per level). Climbing
                              // numbers = something is outliving its band
+    DEBUG_LAYOUT: false,     // log the canvas size, the layout's numbers and
+                             // the camera split once at startup: [buffer],
+                             // [layout], [camB], and the battery sprite count
     BATTERY_START_LEVEL: 10,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
@@ -197,6 +200,41 @@ var CONFIG = {
         // null decides from the window's shape at boot. 'portrait' / 'landscape'
         // pins it, which is how you test one layout on the other device.
         FORCE: null,
+    },
+
+    // ── Level art, loaded as levels come near ─────────────────────────────────
+    // A level's OWN art — its crops, animals, produce, buildings, farmer and
+    // any tile sheet only its map uses — is fetched when that level is about to
+    // be built, not all up front. Shared art (canal and terrain sheets, the
+    // trencher, lilies, block, fence poles, UI) still loads before play.
+    //
+    // What a level needs is read from its level entry and its map, both of
+    // which ARE loaded up front — they are a few KB — so nothing has to be
+    // listed by hand.
+    //
+    // The world is built a margin ahead of the view (ENDLESS.FILL_AHEAD). A
+    // level whose art has not arrived simply waits to be built, and the margin
+    // is what keeps that wait off screen. The loading screen stays up until
+    // everything the opening view needs is built.
+    // [timing] lines in the console: how long each stage before play took, and
+    // the slowest downloads. For finding where the loading time goes; turn off
+    // before release.
+    DEBUG_LOAD_TIMING: false,
+
+    LAZY_LEVELS: {
+        ENABLED: true,        // false loads every level's art before play, as before
+        PRELOAD: 5,           // levels whose art rides the loading screen from the
+                              // start. 5 is what the opening view builds on a
+                              // landscape screen (measured), so it all goes out in
+                              // the first round. A taller screen may need one
+                              // more; that level follows in a second batch, still
+                              // under the loading screen
+        AHEAD:   3,           // levels past the newest built one kept downloading
+                              // in the background, so a level is almost never
+                              // waited on during play
+        SCREEN_TIMEOUT_MS: 20000,  // lift the loading screen anyway after this —
+                                   // a stalled download must not lock the player
+                                   // out; the level just builds when it arrives
     },
 
     // ── The roster ────────────────────────────────────────────────────────────
@@ -914,6 +952,10 @@ var CONFIG = {
             // entries in two places.
             LEVELS: LEVEL_DATA.LEVELS,
             FILE:   (LEVEL_DATA.LEVELS[0] || {}).FILE,   // fallback map
+            // Set by build.sh in the BUILD copy of levels.js only: the maps
+            // packed five to a file. Absent in the working folder, where every
+            // map loads from its own .tmj.
+            MAP_BUNDLES: LEVEL_DATA.MAP_BUNDLES || null,
 
             // ── Markers ──────────────────────────────────────────────────
             // A map that references MARKER_TILESET is painting MARKERS: tiles
@@ -1218,7 +1260,22 @@ var CONFIG = {
                 'mud.tsx':     { IMAGE: 'graphics/tilesheets/mud.webp',
                                  KEY: 'mud_sheet' },
             },
-            FRAME:   128,           // frame size in the sheet
+            FRAME:   64,            // frame size in the sheet. The tiles are DRAWN
+                                    // at ~52px (landscape: 1152 / 22 columns) and
+                                    // ~54px (portrait: 1080 / 20), on every device
+                                    // — the stage width is fixed — so 64px frames
+                                    // hold all the detail that can ever show. The
+                                    // 128px originals stay the Tiled masters; the
+                                    // game's sheets are exported at half size
+                                    // (box filter, so no tile borrows its
+                                    // neighbour's pixels). Every sheet cut at this
+                                    // size — canals, terrain, fence, mud and the
+                                    // watering splash — has to match it. Only
+                                    // art drawn ONE tile big belongs on this
+                                    // number: the farmer stands 1.9 tiles tall
+                                    // and has his own (FARMER.FRAME). A map
+                                    // narrower than ~18 columns would draw tiles
+                                    // past 64px.
             SHEET_PAD: 2,           // EXTRUSION, in px, added around every frame
                                     // of every tile sheet at load. 0 disables.
                                     //
@@ -1781,33 +1838,29 @@ var CONFIG = {
             // there is no separate vertical pose and none is needed.
             FARMER: {
                 ENABLED: true,
-                // ── The rotation ────────────────────────────────────────
-                // Different farms, different farmers. One sheet per farmer in
-                // DIR, named here in PLAY ORDER, wrapping at the end — level 1
-                // gets the first, level 2 the second, and so on. Add a sheet and
-                // its name here; nothing else needs to know.
+                // ── The farmer ──────────────────────────────────────────
+                // ONE farmer, who moves from farm to farm (TRAVEL below). Only
+                // the first sheet named here is used; the list shape is kept so
+                // a sheet can be swapped by editing one name.
                 //
                 // Each is one row of FRAMES square frames:
                 //   0        idle — a STILL pose, not a loop
                 //   1 .. 4   the walk cycle, drawn facing RIGHT
                 DIR:    'graphics/farmers/',
-                CYCLE:  ['farmer1', 'farmer2'],
+                CYCLE:  ['farmer1'],
                 EXT:    '.webp',
                 FRAMES: 5,
-                // ── WHEN HE TURNS UP ────────────────────────────────────
-                // Levels are built several ahead of the machine, so without
-                // this a farmer is already standing in a field the player has
-                // not reached — three farms up the screen, tending crops that
-                // are still seeds in ground nobody has watered.
-                //
-                // He walks on once HIS OWN level is being dug, which is the
-                // moment that farm becomes the one being played.
+                // His OWN frame size, not TILEMAP.FRAME. He stands SIZE (1.9)
+                // tiles tall — about 100px, and ~120px at the top of a cheer —
+                // so the 64px frames the tile sheets moved to would stretch him
+                // and blur him. 128 covers his biggest moment.
+                FRAME:  128,
+                // ── HOW HE POPS IN ──────────────────────────────────────
+                // On the session's FIRST farm he is simply standing there from
+                // the start, before the machine moves. On every farm after it he
+                // arrives with this pop (TRAVEL), and leaves the last one with
+                // the same pop run backwards.
                 REVEAL: {
-                    AFTER_TILES: 0.5,   // how far into the level the blade must
-                                        // be. Not 0: the handover itself would
-                                        // then pop him in, and a beat later
-                                        // reads as him coming out to the field
-                                        // rather than being switched on with it
                     FADE_MS:  380,
                     POP_FROM: 0.35,     // scale he swells from
                     POP_EASE: 'Back.easeOut',
@@ -1938,29 +1991,24 @@ var CONFIG = {
                     DELAY_MS:  250,   // after the cheer, before the coins fly
                 },
 
-                // ── AND HE LEAVES ───────────────────────────────────────
-                // The field is gathered and celebrated; there is nothing left
-                // for him to do in it. He walks off the side he is standing on
-                // and out of the map, rather than wandering a finished farm
-                // while the machine works two levels above.
+                // ── AND ON TO THE NEXT FIELD ────────────────────────────
+                // ONE farmer runs the whole farm. The field is gathered, he
+                // cheers, is paid, then shrinks away where he stands and pops
+                // up at the next level's starting spot — beside its crop, on
+                // HIS side of the canal. The pop is the same entrance he makes
+                // on level 1 (REVEAL), and the shrink is that run backwards.
                 //
-                // Off the SIDE, not the bottom: the sides are the only edges the
-                // player is not looking at — the farm scrolls upward, so leaving
-                // downward would walk him back through the level and leaving
-                // upward would take him into the next one.
-                LEAVE: {
-                    ENABLED:   true,
-                    DELAY_MS:  700,   // a beat after the cheer, so the two read
-                                      // as finishing and then going, not as one
-                                      // move. Long enough, too, that the coins
-                                      // are away before he is: he is paid where
-                                      // he stood in the field, not halfway off
-                                      // the edge of it
-                    SPEED_MUL: 2.0,   // twice his wander; his day is over and
-                                      // there is nothing to watch him do on the
-                                      // way out
-                    MARGIN:    1.5,   // tiles past the map edge before he is
-                                      // taken off — clear of the widest sprite
+                // THE VIEW WINS OVER THE CHEER. If the camera sets off for the
+                // next farm before he has cheered, or while he is at it, the
+                // cheer is cut and he goes at once: he should be standing in a
+                // farm when it comes into view, not celebrating the last one
+                // off screen.
+                TRAVEL: {
+                    DELAY_MS: 250,    // a beat after the cheer, so finishing and
+                                      // going read as two moves, not one
+                    GAP_MS:   150,    // nobody on screen between the two — long
+                                      // enough to read as leaving and arriving,
+                                      // short enough not to look like a glitch
                 },
                 // ── BREATHING ───────────────────────────────────────────
                 // There is one idle frame, so a standing farmer is a still
@@ -2161,6 +2209,11 @@ var CONFIG = {
                 // painted in the maps either way; they are simply not read.
                 ENABLED: true,
                 FILE:  'graphics/block.webp',
+                // The tile size the wall was DRAWN against: two 128px canal
+                // cells. Its own number, not TILEMAP.FRAME, because the tile
+                // sheets were exported at half size and this art was not — tied
+                // to FRAME it would have doubled on screen.
+                ART_TILE: 128,
                 // Which point ON THE ART lands on the level boundary. Not the
                 // centre: the wall's waterline sits high in the image, so this
                 // is the pivot that puts the line where the water is actually
@@ -2294,7 +2347,7 @@ var CONFIG = {
             // timer — you see the water land on it. One row of 128px frames.
             PLANT_WATER: {
                 ENABLED: true,
-                FILE:    'graphics/plant-water.webp',
+                FILE:    'graphics/tilesheets/plant-water.webp',
                 FRAMES:  8,
                 FPS:     6,     // halved from 12 — the whole splash now runs
                                 // ~1.3s instead of ~0.67s
@@ -3449,6 +3502,16 @@ var CONFIG = {
                 BELT_H:     794,
                 CTRL_W:     396,   // control-unit art size (source px)
                 CTRL_H:     492,
+                SHEET_SCALE: 0.5,  // the belt and control-unit SHEETS are exported
+                                   // at this fraction of the source px above, which
+                                   // stay the authored numbers every placement
+                                   // below is measured in. Only the frame cutting
+                                   // uses it. The rig is drawn at most ~156x194
+                                   // (control) and ~103x313 (belt) canvas px —
+                                   // portrait, on every device, since the stage
+                                   // width is fixed — so half size (198x246,
+                                   // 130x397 frames) still has detail to spare.
+                                   // Raising BELT_TILES past ~2.4 would not.
                 CTRL_GAP:   566,   // belt centre → control centre, AHEAD of the
                                    // belt (source px, same ratio as the sizes):
                                    // the control unit leads, the belt trails at
@@ -3989,7 +4052,7 @@ async function initBatteryImagePaths() {
         BATTERY_IMAGE_PATHS[level] = `graphics/battery/${batteryData.fileName}`;
     }
     
-    console.log(`Registered ${Object.keys(BATTERY_IMAGE_PATHS).length} battery sprites`);
+    if (CONFIG.DEBUG_LAYOUT) console.log(`Registered ${Object.keys(BATTERY_IMAGE_PATHS).length} battery sprites`);
 }
 
 function loadBatteryImagesFromCache(scene) {
