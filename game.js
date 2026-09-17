@@ -6821,26 +6821,14 @@ class GameScene extends Phaser.Scene {
                 });
             }
         }
-        // Foam is drawn as textured sprites (water frame + 30% white, soft
-        // ellipse — baked once). They sit BELOW the revealed water (1.55) so the
-        // filling water covers the foam behind its edge and only the leading
-        // churn shows. A per-head strip mask keeps them inside the banks.
-        this._ensureFoamBlobTexture();
         this._ensureMarkTexture();
         this._ensureRippleTexture();
-        const foamMask = this._addB(this.add.graphics().setVisible(false), seg);
-        foamMask._noRebase = true;
         return { g, cells, active: [], triggered: new Set(),
                  mainLeftCol: g.mainLeftCol, mainRightCol: g.mainRightCol,
-                 foamMask, blobMask: foamMask.createGeometryMask(), marks: [],
+                 marks: [],
                  channelW: this.road.canalW, seg,
                  met: new Set(),        // cell pairs whose fronts have already met
-                 heads: [], foamBlobs: [], foamWhite: [],
-                 // The main canal's front has its own sprites: same behaviour,
-                 // different depth band (see _mainDepth).
-                 headM: null, foamBlobsM: [], foamWhiteM: [],
-                 headFrame: CONFIG.ROAD.TILEMAP.TERRAIN_WATER !== undefined
-                          ? CONFIG.ROAD.TILEMAP.TERRAIN_WATER : 1 };
+               };
     }
 
     // Depth of the MAIN canal's water. It sits above the crops (which reach
@@ -6856,38 +6844,6 @@ class GameScene extends Phaser.Scene {
     _mainDepth() {
         const d = CONFIG.ROAD.TILEMAP.MAIN_WATER_DEPTH;
         return d !== undefined ? d : 3.10;
-    }
-
-    // Bake the foam textures: a water-texture soft ellipse ('foam_blob') and a
-    // matching WHITE soft ellipse ('foam_white') used as a larger backing so
-    // each blob gets a white rim.
-    _ensureFoamBlobTexture() {
-        if (this.textures.exists('foam_blob')) return;
-        const S = 64;
-        const softEllipse = (ctx) => {              // erase to a soft ellipse
-            ctx.globalCompositeOperation = 'destination-in';
-            const grad = ctx.createRadialGradient(S / 2, S / 2, S * 0.12, S / 2, S / 2, S * 0.5);
-            grad.addColorStop(0, 'rgba(0,0,0,1)');
-            grad.addColorStop(0.72, 'rgba(0,0,0,1)');
-            grad.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = grad; ctx.fillRect(0, 0, S, S);
-            ctx.globalCompositeOperation = 'source-over';
-        };
-        // Water blob — cut from the terrain sheet's flat water frame, so the
-        // foam matches the canal's water exactly.
-        const TMW = CONFIG.ROAD.TILEMAP;
-        const tex   = this.textures.get('terrain');
-        const frame = tex.get(TMW.TERRAIN_WATER !== undefined ? TMW.TERRAIN_WATER : 1);
-        const blob  = this.textures.createCanvas('foam_blob', S, S);
-        const bctx  = blob.getContext();
-        bctx.drawImage(tex.getSourceImage(), frame.cutX, frame.cutY,
-                       frame.cutWidth, frame.cutHeight, 0, 0, S, S);
-        softEllipse(bctx); blob.refresh();
-        // White backing.
-        const white = this.textures.createCanvas('foam_white', S, S);
-        const wctx  = white.getContext();
-        wctx.fillStyle = '#ffffff'; wctx.fillRect(0, 0, S, S);
-        softEllipse(wctx); white.refresh();
     }
 
     // Advance EVERY band's branch water — not just the active tunnel's. Once
@@ -6951,8 +6907,6 @@ class GameScene extends Phaser.Scene {
     // per arm-side at most, and only some of those — sparse and irregular, so
     // it never reads as an outline drawn down the banks. Positions are fixed
     // here and never touched again; only brightness animates afterwards.
-    // Reuses the baked white foam ellipse, squashed thin, so there is no new
-    // art and the streaks batch with the foam.
     _placeCellMarks(tn, F, cell, time) {
         const TM = CONFIG.ROAD.TILEMAP, g = F.g;
         const layers = TM.MARK_LAYERS || [{ inset: 0.86, chance: 0.34, len: 0.30, thick: 0.07 }];
@@ -7026,9 +6980,8 @@ class GameScene extends Phaser.Scene {
         cell.marked = true;
     }
 
-    // A crisp solid-white rectangle, tinted per streak at runtime. Deliberately
-    // NOT the soft foam ellipse: the shimmer wants hard edges, so it reads as a
-    // facet of light on the surface rather than a glow.
+    // A crisp solid-white rectangle, tinted per streak at runtime. Hard edges,
+    // so the shimmer reads as a facet of light on the surface rather than a glow.
     // A hollow white circle, tinted per use — white for the same reason mark_px
     // is: one texture serves any colour the effect ever wants.
     //
@@ -7050,9 +7003,8 @@ class GameScene extends Phaser.Scene {
 
     // Water arriving at something: the end of a ditch, or another front head on.
     //
-    // Rings are made per event and destroy themselves, with no pool. The foam is
-    // pooled because it runs every frame; this fires on the order of ten times
-    // in a whole level.
+    // Rings are made per event and destroy themselves, with no pool: this fires
+    // on the order of ten times in a whole level.
     _waterHit(F, x, y, isMain) {
         const H = (CONFIG.ROAD.WATER || {}).HIT || {};
         if (H.ENABLED === false) return;
@@ -7221,12 +7173,10 @@ class GameScene extends Phaser.Scene {
             }
         }
 
-        // 3. Reveal sprites (the wet TRAIL), then draw a rounded head at each
-        //    advancing front. Main cells reveal the DRY tile (by the dig) then
-        //    the FILLED tile (by the water); branches reveal only FILLED. The
-        //    head sits on the reveal edge and hides its straight line, so the
-        //    water reads as a flowing front, not a sliding bar.
-        F.foamMask.clear().fillStyle(0xffffff, 1);   // rebuilt per head below
+        // 3. Reveal sprites — the water IS the tile art being uncovered, which
+        //    follows every bend in the channel because it is the channel. Main
+        //    cells reveal the DRY tile (by the dig) then the FILLED tile (by the
+        //    water); branches reveal only FILLED.
         const marks = CONFIG.ROAD.TILEMAP.MARK_ENABLED !== false;
         for (const cell of F.cells.values()) {
             if (cell.isMain) this._revealCrop(cell.dry, cell.dryP, 's');
@@ -7268,175 +7218,6 @@ class GameScene extends Phaser.Scene {
                 m.spr.setTint(cols[stepIdx(time, cMs, cols.length, m.cPhase)]);
             }
         }
-
-        // Channel widths (the gap between banks): one tile's fraction for a
-        // branch; for the N-wide main only the two outer walls eat in.
-        const cf      = CONFIG.ROAD.TILEMAP.CHANNEL_FRAC || 0.5;
-
-        // Heads: a bulge of the WATER TEXTURE at each front (a pooled sprite of
-        // the plain water frame), with textured foam blobs churning at the
-        // leading edge — the blobs sit below the revealed water so it swallows
-        // them behind its edge.
-        const fit     = CONFIG.ROAD.TILEMAP.HEAD_FIT || 1;
-        const branchW = g.tile * cf * fit;
-        const mainChW = g.tile * (g.mainW - 1 + cf) * fit;   // sits inside the banks
-        const MOT = { w: [1, 0], e: [-1, 0], n: [0, 1], s: [0, -1] };
-        let hi = 0, fbi = 0, fbiM = 0, mainHead = false;
-        const hLen    = CONFIG.ROAD.TILEMAP.HEAD_LEN !== undefined
-                      ? CONFIG.ROAD.TILEMAP.HEAD_LEN : 0.35;
-        const MD      = this._mainDepth();
-        // `main` splits the pools: the main canal's water sits ABOVE the crops
-        // (so the machine can sit above them too and still be under its water),
-        // while a branch's stays in the ground layers where crop leaves growing
-        // over a ditch still cover it.
-        // HEAD_ENABLED off: no bulge, no foam — the reveal alone is the water.
-        // The head is a sprite laid ACROSS the channel at the front, and a channel
-        // that bends inside its own tile has no single "across" to lay it on: at a
-        // turn the head is square to the direction the water entered, so it hangs
-        // over the bank the channel is curving away from. Cropping it to the bend
-        // would mean knowing the channel's shape within the tile, which is more
-        // than the tile data carries. The crop-reveal has no such problem — it
-        // uncovers the tile's own art, so it follows every bend exactly.
-        const headOn = CONFIG.ROAD.TILEMAP.HEAD_ENABLED !== false;
-        const putHead = (x, y, mx, my, chW, main) => {
-            if (!headOn) return;
-            const horiz = mx !== 0;
-            // Full channel width across the flow, HEAD_LEN of it along the flow.
-            const ew = horiz ? chW * hLen : chW, eh = horiz ? chW : chW * hLen;
-            let spr = main ? F.headM : F.heads[hi];
-            if (!spr) {
-                const ha = CONFIG.ROAD.TILEMAP.HEAD_ALPHA;
-                spr = this._addB(this.add.image(0, 0, 'terrain', F.headFrame)
-                    .setDepth(main ? MD + 0.01 : 1.56)
-                    .setAlpha(ha !== undefined ? ha : 1)
-                    .setVisible(false), F.seg);
-                spr._noRebase = true;                // repositioned every frame
-                if (main) F.headM = spr; else F.heads.push(spr);
-            }
-            spr.setVisible(true).setPosition(x, y).setDisplaySize(ew, eh);
-            if (main) mainHead = true; else hi++;
-            // Mask strip: channel-wide across, long along the flow (so the
-            // forward foam bulge isn't clipped, only the sides).
-            if (horiz) F.foamMask.fillRect(x - chW, y - chW / 2, 2 * chW, chW);
-            else       F.foamMask.fillRect(x - chW / 2, y - chW, chW, 2 * chW);
-            if (main) fbiM = this._placeFoamBlobs(F, fbiM, x, y, mx, my, chW, time, true);
-            else      fbi  = this._placeFoamBlobs(F, fbi,  x, y, mx, my, chW, time, false);
-        };
-
-        for (const cell of F.active) {
-            // Shown for every still-filling cell. A dead end is snapped to
-            // `filled` the instant its head hits the stop point (see step 2),
-            // so this skip also drops its head there — no overrun, no gap.
-            if (cell.filled) continue;
-            const cx = g.left + (cell.col + 0.5) * g.tile;
-            const cy = tn.exitY + (cell.row + 0.5) * g.tile;
-            const half = g.tile / 2, p = cell.progress;
-            let fx = cx, fy = cy;
-            switch (cell.entryDir) {
-                case 'w': fx = cx - half + p * g.tile; break;
-                case 'e': fx = cx + half - p * g.tile; break;
-                case 'n': fy = cy - half + p * g.tile; break;
-                case 's': fy = cy + half - p * g.tile; break;
-            }
-            const m = MOT[cell.entryDir] || [0, 0];
-            putHead(fx, fy, m[0], m[1], branchW, false);
-        }
-        // Main-canal head: one wide front across the 2-wide channel, riding the
-        // waterline up.
-        if (tn.wet > 1 && tn.wet < tn.len - 1) {
-            const cx = g.left + F.mainRightCol * g.tile;
-            const wy = tn.exitY + tn.len - tn.wet;
-            putHead(cx, wy, 0, -1, mainChW, true);
-        }
-        for (let k = hi; k < F.heads.length; k++) F.heads[k].setVisible(false);
-        for (let k = fbi; k < F.foamBlobs.length; k++) F.foamBlobs[k].setVisible(false);
-        for (let k = fbi; k < F.foamWhite.length; k++) F.foamWhite[k].setVisible(false);
-        if (!mainHead && F.headM) F.headM.setVisible(false);
-        for (let k = fbiM; k < F.foamBlobsM.length; k++) F.foamBlobsM[k].setVisible(false);
-        for (let k = fbiM; k < F.foamWhiteM.length; k++) F.foamWhiteM[k].setVisible(false);
-    }
-
-    // Foam: a few big overlapping textured blobs (long axis along the flow)
-    // laid across the channel in a forward-bowed cluster — deepest at the
-    // centre — so they merge into a forward-bulging crest. Pooled sprites of
-    // the baked foam texture, below the water. Returns the next pool index.
-    _placeFoamBlobs(F, fbi, x, y, mx, my, chW, time, main) {
-        const WA = CONFIG.ROAD.WATER;
-        const horiz = mx !== 0;             // flow runs left-right?
-        const px = -my, py = mx;            // across-channel axis
-        const TM = CONFIG.ROAD.TILEMAP;
-        const cfg = (k, d) => (TM[k] !== undefined ? TM[k] : d);
-        // How far the crest reaches past the revealed water edge, in units of
-        // chW: FOAM_FWD + FOAM_ARC + (FOAM_ACROSS * FOAM_LONG / 2). Shrinking
-        // FOAM_LONG thins the BODY behind the arc, which is what drags the arc
-        // forward off the water's tip — the bow itself is FOAM_ARC.
-        const n        = 4;                 // blobs per head
-        const spread   = chW * cfg('FOAM_SPREAD', 0.35);  // half-span of centres
-        const calm     = cfg('FOAM_EDGE_CALM', 1);        // stillness at the walls
-        const arcDepth = chW * cfg('FOAM_ARC', 0.30);   // forward bow at the centre
-        const baseFwd  = chW * cfg('FOAM_FWD', 0);      // cluster ahead of centre
-        const across   = chW * cfg('FOAM_ACROSS', 0.5); // blob across-diameter
-        const LONG     = cfg('FOAM_LONG', 1.0);         // stretch along the flow
-        const WIDE     = 2;                 // across (perpendicular) side ×2
-        const RIM      = 1.18;              // white backing this much larger → rim
-        const foamWater = cfg('FOAM_WATER', true);
-        const back      = chW * cfg('FOAM_WATER_BACK', 0.25);   // water copy trails
-        // Which side of the revealed tile (1.55) the crest sits on. Read once
-        // per frame but only APPLIED when a pooled sprite is first created, so
-        // flipping it takes a reload — deliberate: writing depth every frame
-        // would dirty the display list and force a full re-sort each frame.
-        const above     = cfg('FOAM_ABOVE', false);
-        // The main canal's crest rides with its water, up above the crops; a
-        // branch's stays down in the ground layers. Same relationship to its own
-        // water tile either way — just measured off a different base.
-        const wd        = main ? this._mainDepth() : 1.55;
-        const dWhite    = above ? wd + 0.01  : wd - 0.025;
-        const dBlob     = above ? wd + 0.015 : wd - 0.02;
-        const whitePool = main ? F.foamWhiteM : F.foamWhite;
-        const blobPool  = main ? F.foamBlobsM : F.foamBlobs;
-        // Same one-shot treatment as the depth: the crest is see-through so the
-        // machine under it still reads.
-        const crestA    = cfg('CREST_ALPHA', 1);
-        for (let i = 0; i < n; i++) {
-            const t   = (i / (n - 1)) * 2 - 1;                 // -1..1 across
-            const fwd = baseFwd + arcDepth * (1 - t * t);      // parabolic forward bow
-            // Animation is damped toward the walls: at FOAM_EDGE_CALM = 1 the
-            // outermost blobs are perfectly still and stay at full size, so the
-            // foam is always pinned to both banks. Without this they shrink and
-            // drift with the rest and the water momentarily looks detached from
-            // the wall. The middle keeps its full churn.
-            const anim = 1 - calm * (t * t);
-            const jit = Math.sin(i * 3.1 + time / 170) * chW * 0.04 * anim;
-            const cx  = x + px * (t * spread) + mx * (fwd + jit);
-            const cy  = y + py * (t * spread) + my * (fwd + jit);
-            const pulse = 0.85 + 0.15 * Math.sin(time / 130 + i);
-            const d   = across * (1 - anim * (1 - pulse));
-            const alongD = d * LONG, acrossD = d * WIDE;   // along flow / perpendicular
-            const ew = horiz ? alongD : acrossD, eh = horiz ? acrossD : alongD;
-            const grab = (pool, tex, depth) => {
-                let s = pool[fbi];
-                if (!s) {
-                    s = this._addB(this.add.image(0, 0, tex).setDepth(depth)
-                        .setAlpha(crestA).setVisible(false), F.seg);
-                    s._noRebase = true; s.setMask(F.blobMask); pool.push(s);
-                }
-                return s;
-            };
-            // White foam crest, then the same blob in water texture set BACK
-            // along the flow. FOAM_ABOVE picks which side of the revealed tile
-            // (1.55) they sit on: BELOW, the tile cuts them and only what runs
-            // past its straight edge shows; ABOVE, the whole blob is visible
-            // and rides over the revealed water, tails included.
-            grab(whitePool, 'foam_white', dWhite).setVisible(true)
-                .setPosition(cx, cy).setDisplaySize(ew * RIM, eh * RIM);
-            if (foamWater) {
-                grab(blobPool, 'foam_blob', dBlob).setVisible(true)
-                    .setPosition(cx - mx * back, cy - my * back)
-                    .setDisplaySize(ew, eh);
-            }
-            fbi++;
-        }
-        return fbi;
     }
 
     // A FIXED crack pattern belonging to the ground down the whole dig column
@@ -7619,10 +7400,9 @@ class GameScene extends Phaser.Scene {
             .setOrigin(0.5, 0).setDepth(2.05).setVisible(false), seg);
         // Two sprites, one rig. The trenching unit is drawn ABOVE the control
         // unit so the belt reads as passing over the machine's frame, and both
-        // sit over the dry trench tile (1.52) but under the whole waterline —
-        // its crest foam (1.525/1.53), the water itself (1.55) and the head
-        // (1.56). The machine is down in the ditch, so the water it lets in
-        // rolls over the belt's trailing end, crest and all. Both are parked
+        // sit over the dry trench tile (1.52) but under the water itself
+        // (1.55). The machine is down in the ditch, so the water it lets in
+        // rolls over the belt's trailing end. Both are parked
         // on frame 1 and only run while the machine is working.
         this._makeTrencherAnims();
         const flip = !!TR.FLIP_Y;

@@ -2299,7 +2299,6 @@ var CONFIG = {
             // is the thing to correct if the sheet changes again.
             TERRAIN: 'graphics/tilesheets/terrain.webp',
             TERRAIN_GROUND: 0,      // row 1, col 1 — the field's base tile, dry
-            TERRAIN_WATER:  1,      // row 1, col 2 — flat water; the flow head
             // Row 1, col 3 — the SAME bare ground as col 1, damp. Not the tilled
             // pair below: this is the field itself, unworked, with water in it.
             //
@@ -2309,7 +2308,6 @@ var CONFIG = {
             // which is the thing the machine is actually doing. It also gives a
             // level with few crops something to show for being dug.
             TERRAIN_GROUND_DAMP: 2,
-                                    // and its foam blobs are cut from this
             TERRAIN_TILLED:     6,  // row 2, col 1 — DRY tilled soil, and the
                                     // first of that row's six edge variants
             TERRAIN_GROUND_WET: 12, // row 3, col 1 — the SAME tilled shapes,
@@ -2813,8 +2811,6 @@ var CONFIG = {
             // No flipped versions are needed, and a flip would mirror the
             // organic noise into a visible reflection.
             CROP_OVERLAY_EDGES: [0, 1, 3, 5, 7, 15],
-                                    // (the flow head's water now comes from
-                                    // TERRAIN_WATER above, not the canal sheet)
             SPLIT_AT:     0.6,     // how far the water must get into a junction
                                     // tile before a side branch starts, as a
                                     // fraction of the tile.
@@ -2901,41 +2897,12 @@ var CONFIG = {
             MARK_COLORS: [0xeaf6fb, 0xbfe8f7, 0x9fdcf2],
             MARK_COLOR_MS: 7500,    // colour cycle, deliberately out of step
                                     // with the brightness so they never align
-            // Measured off the art, NOT the same as CHANNEL_FRAC below: the
+            // Measured off the art: the
             // painted water spans ~0.45 of a tile in a branch tile, and the
             // main canal's outer water edge sits ~0.19 tile from each of its
             // two columns' centres. Streaks are placed against these.
             MARK_CHAN:    0.45,     // painted branch water width, tile fraction
             MARK_MAIN:    0.19,     // main canal outer edge, from cell centre
-            CHANNEL_FRAC: 0.5,      // water-channel width as a fraction of a tile
-                                    // (the gap between the banks in the art). The
-                                    // head is sized to this so it fits the walls;
-                                    // the 2-wide main gets (mainW-1+frac) tiles,
-                                    // since only its two OUTER walls eat in
-            HEAD_FIT: 0.94,         // head width × this, so it sits just inside the
-                                    // banks and the art's white waterline still
-                                    // shows around it
-            HEAD_LEN: 0,            // the head's WATER bulge (the body behind the
-                                    // foam), measured ALONG the flow, as a fraction
-                                    // of the channel width. Across the channel it
-                                    // always spans the full width — this only
-                                    // shortens how far it reaches forward, i.e. how
-                                    // far the drawn front runs ahead of the water
-                                    // that has actually been revealed
-            // The front is TWO rounded clusters, both drawn BEHIND the revealed
-            // water tile (depths 1.525 / 1.53 vs the tile's 1.55), so each is
-            // clipped by the tile and only the part poking past its straight
-            // crop edge is seen:
-            //   • white blobs  — the foam crest, straddling the reveal edge so
-            //     half sits on revealed water and half runs ahead of it
-            //   • water blobs  — the same cluster copied FOAM_WATER_BACK behind
-            //     the white one, so a curved water edge shows between the foam
-            //     and the tile instead of the tile's straight cut
-            // Opacity of the moving front. The trencher's belt sits just under
-            // these (see TUNNEL.TRENCHER depths), so knocking them back lets
-            // the machine read THROUGH the water rolling over it. Applied when
-            // a pooled sprite is first created — like FOAM_ABOVE, a change
-            // takes a reload, so the display list is never dirtied per frame.
             // Where the MAIN canal's water sits in the stack. Above the crops
             // (~3.02) so the trencher can be drawn over the whole field and
             // still run under its own water. Branch water is unaffected — it
@@ -2958,54 +2925,6 @@ var CONFIG = {
                                     // overlaps one.
             MAIN_WATER_DEPTH: 3.10,
 
-            // The moving front. OFF: the water is simply the tile art being
-            // uncovered, which follows every bend in the channel because it IS
-            // the channel. The head was a sprite laid across the front, so a
-            // tile where the channel turns had it lying over a bank — the turn
-            // happens inside the tile and the head has no way to know.
-            HEAD_ENABLED: false,
-
-            HEAD_ALPHA:  0.75,      // the head — the water tongue at the front
-            CREST_ALPHA: 0.75,      // the foam crest blobs (white + water copy)
-            FOAM_ABOVE: false,      // draw the crest ABOVE the revealed tile
-                                    // (1.56/1.565) instead of below it
-                                    // (1.525/1.53). Above, the whole blob shows
-                                    // and rides over the revealed water instead
-                                    // of being cut by its straight edge
-            FOAM_WATER: true,       // draw the trailing water-textured copy
-            FOAM_WATER_BACK: 0.0625, // how far behind the white cluster it sits.
-                                    // Smaller = the water copy rides further
-                                    // forward over the white one, leaving a
-                                    // thinner rim of foam showing at the crest
-            // Crest shape, all in units of the channel width. The leading tip
-            // sits FOAM_FWD + FOAM_ARC + FOAM_ACROSS*FOAM_LONG/2 ahead of the
-            // revealed water edge.
-            FOAM_LONG:   2.0,       // blob stretch ALONG the flow (NOT across —
-                                    // that is FOAM_ACROSS). Long enough that the
-                                    // blob's tail always runs back UNDER the
-                                    // revealed tile: as the crest animates, a
-                                    // short blob leaves a bare gap between itself
-                                    // and the tile edge and the front breaks into
-                                    // pieces. With the tail buried there is no
-                                    // gap to see and the front reads as one mass
-            FOAM_ARC:    0.30,      // depth of the forward bow at the channel
-                                    // centre — this is the arc itself, keep it
-            FOAM_FWD:   -0.40,      // whole cluster shifted ahead of the edge.
-                                    // NEGATIVE pulls it back. Holds the leading
-                                    // tip at 0.40*chW: the blob grew by 0.25 at
-                                    // BOTH ends, so this cancels the forward half
-                                    // and spends the whole gain on the buried tail
-            FOAM_ACROSS: 0.5,       // blob diameter across the channel
-            FOAM_EDGE_CALM: 1,      // how much the churn is damped toward the two
-                                    // banks. 1 = the outermost blobs never move
-                                    // or shrink, so the foam stays welded to both
-                                    // walls while the middle still churns.
-                                    // 0 = every blob animates equally (old look,
-                                    // where the ends pull back off the wall and
-                                    // the water looks briefly detached from it)
-            FOAM_SPREAD: 0.35,      // how far out the outermost blob centres sit
-                                    // from the channel centre. Raise it if the
-                                    // foam still fails to reach the walls
             FLOW_OFFSET: 1,         // the water-FILLED version of a tile sits this
                                     // many frames after it in the sheet (dry then
                                     // wet, left→right, top→bottom)
@@ -3019,10 +2938,9 @@ var CONFIG = {
             END_FILL: 0.8,          // a dead-end tile's channel closes inside it,
                                     // so water fills only this fraction of the
                                     // tile (up to the closing), not the full edge
-            HEAD_END_STOP: 0.5,     // on a dead-end tile the head stops at this
-                                    // fraction (its foam would otherwise bulge
-                                    // over the rounded closing); the water still
-                                    // fills quietly on to END_FILL
+            HEAD_END_STOP: 0.5,     // on a dead-end tile the water front stops at
+                                    // this fraction, then the rest snaps full up
+                                    // to END_FILL
 
             // Layer order in the .tmj, bottom to top. Every level map carries
             // these four, named exactly this. GROUND and BRANCH are drawn as
