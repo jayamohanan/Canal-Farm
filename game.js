@@ -1662,6 +1662,11 @@ class GameScene extends Phaser.Scene {
         if (P.TOTAL_CHARGE && P.TOTAL_CHARGE.ON_TOP !== false) {
             this._addTop(this.totalChargeText);
             this._addTop(this.totalChargeBolt);
+            // ABOVE THE SPLIT LINE, which rides this same layer at 99998. At
+            // their panel depth (5) the rule was drawn straight through the
+            // number wherever it crosses the boundary.
+            if (this.totalChargeText) this.totalChargeText.setDepth(99999);
+            if (this.totalChargeBolt) this.totalChargeBolt.setDepth(99999);
         }
     }
 

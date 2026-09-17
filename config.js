@@ -1289,7 +1289,7 @@ var CONFIG = {
             // columns plus about three quarters of a tile onto each bank.
             // ── The fence ───────────────────────────────────────────────────
             // A run of close-set wooden poles marking where one farm ends and
-            // the next begins. graphics/fence-pole.webp is one long horizontal
+            // the next begins. graphics/fence_pole.webp is one long horizontal
             // strip of poles, no rails.
             //
             // It sits on a level's FLOOR — the boundary it shares with the level
@@ -1717,7 +1717,7 @@ var CONFIG = {
 
             FENCE: {
                 ENABLED: true,
-                FILE:  'graphics/fence-pole.webp',
+                FILE:  'graphics/fence_pole.webp',
                 GAP_COLS: 1,        // columns kept clear either side of the canal
                 Y:     0,           // nudge off the boundary line, in tiles
                 // Once the machine is working the level above it, its own fence
