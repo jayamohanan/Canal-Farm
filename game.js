@@ -1,4 +1,4 @@
-// Overcharge! — main game scene
+// Canal Farm — main game scene
 // No physics engine — pure drag/drop battery merge + a battery-powered trencher
 
 class AssetManager {
@@ -433,6 +433,7 @@ class GameScene extends Phaser.Scene {
     // PRELOAD
     // ================================================================
     preload() {
+        this.load.on('progress', (v) => setLoadingProgress(LOAD_BOOT_SHARE + (1 - LOAD_BOOT_SHARE) * v));
 
         const startData = getBatteryData(CONFIG.BATTERY_START_LEVEL);
     if (startData) {
@@ -633,6 +634,7 @@ class GameScene extends Phaser.Scene {
     // CREATE
     // ================================================================
     create() {
+        finishLoadingScreen();
 
         const c = this.game.canvas;
 const dpr = window.devicePixelRatio || 1;
@@ -11069,10 +11071,40 @@ function waitForFont() {
         .catch(() => {});
 }
 
+// The loading screen in index.html. The time before Phaser boots (battery check,
+// font) takes the first sliver of the bar; the asset loader fills the rest.
+// Everything here is a no-op once the screen is gone — the scene restarts on a
+// resize, and a second preload must not bring it back.
+const LOAD_BOOT_SHARE = 0.1;
+let loadingScreenDone = false;
+function setLoadingProgress(v) {
+    if (loadingScreenDone || typeof document === 'undefined') return;
+    const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+    const fill = document.getElementById('loading-fill');
+    const label = document.getElementById('loading-percent');
+    const screen = document.getElementById('loading-screen');
+    if (fill)   fill.style.width = pct + '%';
+    if (label)  label.textContent = pct + '%';
+    if (screen) screen.setAttribute('aria-valuenow', pct);
+}
+function finishLoadingScreen() {
+    if (loadingScreenDone) return;
+    setLoadingProgress(1);
+    loadingScreenDone = true;
+    const screen = typeof document !== 'undefined' && document.getElementById('loading-screen');
+    if (!screen) return;
+    // A beat at 100% before fading, so the full bar is actually seen — create()
+    // blocks the page while it builds, and a fade started now would freeze.
+    setTimeout(() => {
+        screen.classList.add('done');
+        setTimeout(() => screen.remove(), 500);
+    }, 250);
+}
+
 if (typeof window !== 'undefined' && !window.__LEVEL_VIEWER__) {
+    setLoadingProgress(LOAD_BOOT_SHARE * 0.4);
     Promise.all([initBatteryImagePaths(), waitForFont()]).then(() => {
-        const indicator = document.getElementById('loading-indicator');
-        if (indicator) indicator.style.display = 'none';
+        setLoadingProgress(LOAD_BOOT_SHARE);
         new Phaser.Game(config);
     });
 }

@@ -6,7 +6,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<link rel="icon" type="image/png" href="/favicon.png">
 
-	<title>Overcharge!</title>
+	<title>Canal Farm</title>
 	<style>
 		/* Self-hosted so the build has no runtime dependency on a font CDN.
 		   `block` rather than `swap`: Phaser draws text into a canvas texture
@@ -42,12 +42,114 @@
 		canvas {
 			display: block;
 		}
-	</style>	
+
+		/* ── Loading screen ──────────────────────────────────────────────────
+		   Plain HTML over the canvas rather than a Phaser scene, so it is on
+		   screen from the first paint: it covers phaser.min.js downloading and
+		   the font wait too, not only the asset loader. game.js fills the bar
+		   and fades it out when the loader completes. No art — all CSS. */
+		#loading-screen {
+			position: fixed;
+			inset: 0;
+			z-index: 1000;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			gap: 22px;
+			padding: 0 16px;
+			/* Same sand as the game's ground, lit a little in the middle so the
+			   bar sits in a soft pool of light rather than on a flat colour. */
+			background: radial-gradient(ellipse at 50% 45%, #e2c9a2 0%, #d0b288 55%, #bf9f73 100%);
+			transition: opacity 0.45s ease;
+		}
+		#loading-screen.done {
+			opacity: 0;
+			pointer-events: none;
+		}
+		.loading-title {
+			font-family: 'Baloo 2', sans-serif;
+			font-weight: 600;
+			font-size: clamp(34px, 7vw, 56px);
+			line-height: 1;
+			color: #5b3a1c;
+			letter-spacing: 0.5px;
+			text-shadow: 0 2px 0 #f3e3c6, 0 4px 10px rgba(91, 58, 28, 0.25);
+		}
+		.loading-track {
+			position: relative;
+			width: min(360px, 78vw);
+			height: 26px;
+			padding: 4px;
+			border-radius: 999px;
+			/* Dug soil: a dark channel with an inner shadow along its top edge,
+			   inside a cream rim. */
+			background: #6e4a28;
+			box-shadow:
+				0 0 0 3px #f3e3c6,
+				0 6px 14px rgba(70, 42, 18, 0.35),
+				inset 0 3px 5px rgba(0, 0, 0, 0.35);
+		}
+		.loading-fill {
+			position: relative;
+			width: 0%;
+			height: 100%;
+			min-width: 18px;          /* stays a pill, never a sliver */
+			border-radius: 999px;
+			overflow: hidden;
+			/* Canal water. */
+			background: linear-gradient(180deg, #7fdcff 0%, #35a8e6 55%, #1f7fc4 100%);
+			box-shadow: 0 0 10px rgba(127, 220, 255, 0.55);
+			transition: width 0.25s ease-out;
+		}
+		/* Moving diagonal ripples, so the bar reads as alive even while a big
+		   file holds the number still. */
+		.loading-fill::before {
+			content: '';
+			position: absolute;
+			inset: 0 -40px 0 0;
+			background: repeating-linear-gradient(
+				-45deg,
+				rgba(255, 255, 255, 0.22) 0 10px,
+				rgba(255, 255, 255, 0) 10px 20px
+			);
+			animation: loading-flow 0.9s linear infinite;
+		}
+		/* Gloss along the top half. */
+		.loading-fill::after {
+			content: '';
+			position: absolute;
+			left: 6px;
+			right: 6px;
+			top: 2px;
+			height: 38%;
+			border-radius: 999px;
+			background: rgba(255, 255, 255, 0.45);
+		}
+		@keyframes loading-flow {
+			from { transform: translateX(-28.28px); }   /* one stripe period along x */
+			to   { transform: translateX(0); }
+		}
+		.loading-percent {
+			font-family: 'Baloo 2', sans-serif;
+			font-weight: 600;
+			font-size: 18px;
+			color: #5b3a1c;
+			opacity: 0.85;
+			font-variant-numeric: tabular-nums;
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.loading-fill::before { animation: none; }
+			.loading-fill { transition: none; }
+		}
+	</style>
 </head>
 <body>
 	<div id="game-container"></div>
-	<div id="loading-indicator" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #333; font-family: Arial; font-size: 18px; z-index: 1000;">
-		Checking battery ̀assets...
+	<div id="loading-screen" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+		<div class="loading-title">Canal Farm</div>
+		<div class="loading-track"><div class="loading-fill" id="loading-fill"></div></div>
+		<div class="loading-percent" id="loading-percent">0%</div>
 	</div>
 	<script src="phaser.min.js"></script>
 	<script src="batteryChargeData.js"></script>
