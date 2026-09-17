@@ -9481,6 +9481,7 @@ console.log(
     _setPaused(on) {
         if (this.gamePaused === on) return;
         this.gamePaused = on;
+        pokiGameplay(!on);
 
         if (on) { this.tweens.pauseAll(); this.anims.pauseAll(); }
         else    { this.tweens.resumeAll(); this.anims.resumeAll(); }
@@ -11091,6 +11092,9 @@ function finishLoadingScreen() {
     if (loadingScreenDone) return;
     setLoadingProgress(1);
     loadingScreenDone = true;
+    // There is no menu: the farm is playable the moment it is built.
+    pokiCall('gameLoadingFinished');
+    pokiGameplay(true);
     const screen = typeof document !== 'undefined' && document.getElementById('loading-screen');
     if (!screen) return;
     // A beat at 100% before fading, so the full bar is actually seen — create()
@@ -11101,9 +11105,39 @@ function finishLoadingScreen() {
     }, 250);
 }
 
+// ── Poki SDK ─────────────────────────────────────────────────────────────────
+// Every call goes through here, because the SDK is optional at runtime: an ad
+// blocker removes it, and a page served anywhere but Poki may not have it. A
+// missing or throwing SDK must never cost the player the game.
+let pokiReady = false;
+function pokiCall(fn) {
+    if (!pokiReady) return;
+    try { window.PokiSDK[fn](); } catch (e) { console.warn(`[poki] ${fn} failed`, e); }
+}
+// Start/stop are sent only on a real change, so a stray repeat from either
+// side never reaches Poki as a double event.
+let pokiPlaying = false;
+function pokiGameplay(on) {
+    if (pokiPlaying === on) return;
+    pokiPlaying = on;
+    pokiCall(on ? 'gameplayStart' : 'gameplayStop');
+}
+// Resolves either way. The timeout is there so a hung init can never hold the
+// game on the loading screen — Poki would rather lose a metric than a player.
+function initPoki() {
+    if (typeof window === 'undefined' || !window.PokiSDK) {
+        console.warn('[poki] SDK not present — running without it');
+        return Promise.resolve();
+    }
+    const init = window.PokiSDK.init()
+        .then(() => { pokiReady = true; })
+        .catch((e) => { console.warn('[poki] init failed — running without it', e); });
+    return Promise.race([init, new Promise((r) => setTimeout(r, 4000))]);
+}
+
 if (typeof window !== 'undefined' && !window.__LEVEL_VIEWER__) {
     setLoadingProgress(LOAD_BOOT_SHARE * 0.4);
-    Promise.all([initBatteryImagePaths(), waitForFont()]).then(() => {
+    Promise.all([initBatteryImagePaths(), waitForFont(), initPoki()]).then(() => {
         setLoadingProgress(LOAD_BOOT_SHARE);
         new Phaser.Game(config);
     });

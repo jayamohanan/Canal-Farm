@@ -151,6 +151,10 @@
 		<div class="loading-track"><div class="loading-fill" id="loading-fill"></div></div>
 		<div class="loading-percent" id="loading-percent">0%</div>
 	</div>
+	<!-- Poki SDK. After the loading screen rather than in the head, so a slow
+	     fetch of it cannot hold back the screen's first paint. Blocked by an ad
+	     blocker, PokiSDK is simply undefined and game.js carries on without it. -->
+	<script src="https://game-cdn.poki.com/scripts/v2/poki-sdk.js"></script>
 	<script src="phaser.min.js"></script>
 	<script src="batteryChargeData.js"></script>
 	<script src="levels.js"></script>
