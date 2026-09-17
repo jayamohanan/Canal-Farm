@@ -7363,32 +7363,9 @@ class GameScene extends Phaser.Scene {
         // Spoil sprays over the belt's trailing half.
         const bodyH = Math.max(4, beltH * (1 - ahead));
 
-        // The water for the whole stretch is drawn complete at create and
-        // hidden behind a mask that follows the blade, so it appears
-        // progressively in the machine's wake (see _paintWater).
-        const WA    = CONFIG.ROAD.WATER;
-        const halfW = r.canalW / 2;
-        // Depth 2.1 puts the water ABOVE the raw soil strip (2.05) and below
-        // the machine (2.2): wherever the mask has let it through, the water
-        // covers the cut; everywhere else the bare soil shows. No side rim —
-        // the lit bank line would break the seam where branches join.
-        // The blue water strip and its foam are hidden: in tile-map mode the
-        // filled `flow_*` sprites are revealed instead (see the flood system).
-        // The objects are kept so the mask/paint code and foam-finger layout
-        // still have something to write to, but nothing shows.
-        const roadGfx = this._addB(this.add.graphics().setDepth(2.1).setVisible(false), seg);
-        roadGfx.fillStyle(WA.COLOR, 1);
-        roadGfx.fillRect(band.cx - halfW, exitY, r.canalW, len);
-
-        const foamGfx = this._addB(this.add.graphics().setDepth(2.15).setVisible(false), seg);
-        foamGfx._noRebase = true;
-
-        const maskShape = this._addB(this.add.graphics().setVisible(false), seg);
-        // Future mask draws use post-rebase coordinates, so the graphics
-        // object itself must never be shifted (see _rebaseWorld).
-        maskShape._noRebase = true;
-        const revealMask = maskShape.createGeometryMask();
-        roadGfx.setMask(revealMask);
+        // The canal's water is the tile art itself, uncovered by the flood
+        // system as it fills (the filled `flow_*` sprites) — nothing is drawn
+        // for it here.
 
         // The machine: a fixed rig that travels with the face. It parks at the
         // head of the built canal and works upward. Drawn above the water it
@@ -7500,7 +7477,7 @@ class GameScene extends Phaser.Scene {
             strain: 0,       // 0 = free-running, 1 = stalled
             wet: 0,                          // how far the water has actually come
             wetV: 0,                         // …and how fast, for its spring
-            bore, maskShape, foam: foamGfx, crack, crackW: beltW,
+            bore, crack, crackW: beltW,
             flood: this._buildFlood(seg, band),   // canal water (tilemap only)
             dams: null, releaseTo: 0,             // mid-level walls (filled below)
             seg: seg || null,
@@ -8045,11 +8022,6 @@ class GameScene extends Phaser.Scene {
             this._advanceWater(tn, dt, time, tn.len);
             if (tn.wet >= tn.len - 0.5) {
                 tn.flooding = false;
-                // Settled: a still, straight-edged canal — no rippling front,
-                // and the foam that rode on it is spent.
-                if (tn.foam) tn.foam.clear();
-                tn.maskShape.clear().fillStyle(0xffffff)
-                    .fillRect(0, tn.exitY - 2, this.scale.width, tn.len + 4);
                 this._finishStretch(tn);
             }
             return;
@@ -8444,57 +8416,7 @@ class GameScene extends Phaser.Scene {
             const floor = (WA.MIN_SPEED || 0) * this.layoutConfig.platformScale * dt;
             tn.wet = Math.min(target, tn.wet + Math.max(eased, floor));
         }
-        this._paintWater(tn, time);
     }
-
-    // Redraw the reveal mask for the current level. The body is one rect; the
-    // leading edge is a row of fingers of differing length, each on
-    // its own slow phase — a wavering tongue of water instead of a ruled line
-    // being towed along. Drawn from scratch every frame: the mask object is
-    // never rebased, so these are always current world coordinates.
-    _paintWater(tn, time) {
-        const WA = CONFIG.ROAD.WATER;
-        const g  = tn.maskShape;
-        const fm = tn.foam;
-        g.clear();
-        if (fm) fm.clear();
-        if (tn.wet <= 0.5) return;
-        g.fillStyle(0xffffff);
-        if (fm) fm.fillStyle(WA.FOAM_COLOR !== undefined ? WA.FOAM_COLOR : 0xffffff,
-                             WA.FOAM_ALPHA !== undefined ? WA.FOAM_ALPHA : 0.9);
-
-        const caps  = WA.FOAM_CAPS !== undefined ? WA.FOAM_CAPS : true;
-        const W     = this.scale.width;
-        const sc    = this.layoutConfig.platformScale;
-        const front = Math.min(tn.wet, (WA.FRONT || 12) * sc);
-        const foamL = (WA.FOAM || 4) * sc;
-        const bulk  = tn.wet - front;
-        const cols  = Math.max(3, WA.FRONT_COLS || 7);
-        const b     = tn.bore;
-        const edge  = tn.entryY - bulk;          // the water fills upward
-        if (bulk > 0) g.fillRect(0, edge, W, bulk);
-
-        const cw = b.cut.width / cols;
-        const x0 = b.x - b.cut.width / 2;
-        for (let i = 0; i < cols; i++) {
-            // Two incommensurate waves per finger, so the front never repeats
-            // a shape and never pulses in unison.
-            const ph = i * 1.7;
-            const w  = 0.5 + 0.25 * Math.sin(time / 260 + ph)
-                           + 0.25 * Math.sin(time / 430 + ph * 2.3);
-            const len = front * (0.15 + 0.85 * w);
-            const fx  = x0 + i * cw - 0.5;
-            g.fillRect(fx, edge - len, cw + 1, Math.max(0, len));
-            // White cap on this finger's tip — same blocky column, so the
-            // foam breaks up along the front exactly as the water does. Off by
-            // default: it reads as a squared-off tip, and the rounded foam
-            // blobs of the tilemap head already crest this front.
-            const fl = Math.min(len, foamL);
-            if (fm && caps && fl > 0.5) fm.fillRect(fx, edge - len, cw + 1, fl);
-        }
-    }
-
-
 
     // ── Spoil ────────────────────────────────────────────────────────────────
     // Everything the machine throws off, as four PARTICLE EMITTERS rather than a

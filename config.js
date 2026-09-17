@@ -3877,21 +3877,6 @@ var CONFIG = {
                                    // Scaled with FLOW_TAU so the tail slows by the
                                    // same 40%, otherwise the run would decelerate
                                    // into the mouth and then speed back up.
-            FRONT:      12,        // length of the wavering leading edge
-                                   // (px @ platformScale)
-            FRONT_COLS: 7,         // fingers across that edge — each on its own
-                                   // phase, so the front never repeats a shape
-            FOAM_CAPS:  false,     // draw the blocky white caps on the finger tips.
-                                   // Off: the main canal's front is left to the
-                                   // rounded foam blobs of the tilemap head, so
-                                   // there is no squared-off white tip
-            FOAM:       4,         // white cap on the tip of each finger
-                                   // (px @ platformScale) — blocky, following the
-                                   // same columns as the front itself
-            FOAM_COLOR: 0xdcf2fb,  // bluish white — white tinted toward the shallow
-                                   // water (EDGE_COLOR), so the foam sits in the
-                                   // water's palette rather than reading as pure white
-            FOAM_ALPHA: 0.9,
         },
 
         // ── Lily pads ─────────────────────────────────────────────────────────
