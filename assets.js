@@ -43,7 +43,6 @@ function sharedAssets() {
     if (startData) A.image(`battery${CONFIG.BATTERY_START_LEVEL}`, `graphics/battery/${startData.fileName}`);
     A.image('coin',       'graphics/ui/merge-grid/coin.png');
     A.image('point',      'graphics/ui/merge-grid/point.png');
-    A.image('down_arrow', 'graphics/ui/merge-grid/down-arrow.png');
     A.image('button',     'graphics/ui/merge-grid/spawn_button3.png');
     // Grain for the cell faces: neutral grey + blurred noise, blended over the
     // flat colour at bake time (see _makeCellTextures).
@@ -90,8 +89,8 @@ function sharedAssets() {
     }
 
     if (TM.ENABLED) {
-        // The two tile sheets EVERY level draws from — 128px frames, dry AND
-        // water-filled tiles in the same sheet.
+        // The two tile sheets EVERY level draws from — TILEMAP.FRAME frames,
+        // dry AND water-filled tiles in the same sheet.
         for (const [key, url] of sharedTileSheets()) A.sheet(key, url, TM.FRAME, TM.FRAME);
         // Roster icons, one sheet per stretch of the run.
         const RO = CONFIG.ROSTER || {};

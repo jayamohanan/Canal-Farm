@@ -79,6 +79,20 @@ var CONFIG = {
         KEY:     'BACKTICK',
     },
 
+    // ── How figures are written ───────────────────────────────────────────────
+    // Every number the player sees goes through _bigNum. Full figures while they
+    // fit, a unit once they do not — the same rule everywhere, so two readouts
+    // never write the same value differently.
+    NUMBERS: {
+        ABBREV_FROM: 1e6,   // below this the whole number is shown, grouped:
+                            // 50,000 and 355,000 rather than 50K and 355K. Raise
+                            // it and more of the run reads exactly; lower it and
+                            // the readouts get narrower. The widest string it can
+                            // produce is 7 characters (999,999), which is what
+                            // the work figure over the machine has to hold
+        SEPARATOR:   ',',   // '' for none
+    },
+
     RESET_PROGRESS: false,
     DEBUG_HALF_LINE: false,  // draw a line splitting partA / partB (vertical in
                              // landscape, horizontal in portrait)
@@ -112,6 +126,22 @@ var CONFIG = {
     DEBUG_LAYOUT: false,     // log the canvas size, the layout's numbers and
                              // the camera split once at startup: [buffer],
                              // [layout], [camB], and the battery sprite count
+    // HOW MANY BATTERY LEVELS ARE FETCHED AHEAD of the highest one reached.
+    // Each icon is ~2.5KB — the whole set of 102 is 256KB — so this is nearly
+    // free, and it is what keeps a fast run of merges from reaching a level
+    // whose picture is still on its way.
+    BATTERY_PREFETCH_AHEAD: 3,
+
+    // ...and the WHOLE set, quietly, once the game is running: a few every
+    // EVERY_MS until all 102 are in hand (~250KB in total). It never touches the
+    // opening load — it waits for the loading screen to go — and it means a
+    // player who loses signal mid-run can keep merging as far as they can get.
+    BATTERY_BACKFILL: {
+        ENABLED:  true,
+        EVERY_MS: 900,
+        BATCH:    4,        // icons per tick, so ~4.5 per second at the default
+    },
+
     BATTERY_START_LEVEL: 1,
     BATTERY_IMAGE_EXTENSIONS: ['svg', 'png', 'jpg', 'webp'],
 
@@ -445,6 +475,86 @@ var CONFIG = {
                              // is a piece of produce, and becomes an icon on
                              // arrival
         DEPTH:       99000,  // over the world, under the pause button
+
+        // ── WHAT A CELL IS FOR, BEFORE IT IS EARNED ─────────────────────────
+        // An empty cell says only "something goes here". The same icon in
+        // shadow says WHICH something — so the strip reads as a list of farms
+        // to come rather than as a row of blanks, and an unlock is a silhouette
+        // filling in with colour rather than a shape appearing from nothing.
+        //
+        // Read from the level list, so a reordered run relabels itself.
+        // ── WHICH ONE IS BEING DUG FOR ─────────────────────────────────────
+        // A small triangle bobbing over the cell the CURRENT level will fill, so
+        // the strip says not only what is coming but which one is being worked
+        // on now. It moves along as each cell is taken and goes when the block
+        // is complete.
+        //
+        // A marker rather than a brighter outline: the cells are ~46px and
+        // already outlined, so "a slightly brighter outline" is easy to miss on
+        // a phone — a shape that moves is not.
+        NEXT_MARK: {
+            ENABLED: true,
+            W:       14,        // px @ design scale
+            H:       9,
+            GAP:     5,         // above the cell's top edge
+            COLOR:   0xffe9a8,
+            STROKE:  0x2b2013,
+            STROKE_W: 2,
+            BOB:     3,         // how far it rises and falls, px @ design scale
+            BOB_MS:  760,
+        },
+
+        GHOST: {
+            ENABLED: true,
+            COLOR:   0x000000,  // tint over the icon: black is a silhouette,
+                                // a dark grey a softer shadow
+            ALPHA:   0.28,      // faint enough that a filled cell still reads as
+                                // the one thing on the strip with colour in it
+        },
+    },
+
+    // ── The unlock moment ─────────────────────────────────────────────────────
+    // A farm is finished: what it grew is held up in the middle of the FARM half,
+    // lit by a turning burst of rays, over a dimmed field. Three seconds, then it
+    // goes and the run carries on.
+    //
+    // THE FARM HALF ONLY. It is drawn by the farm camera, so the merge grid is
+    // neither dimmed nor covered and stays playable throughout — the one thing
+    // the player is holding must never be taken away by a cutscene.
+    //
+    // The machine holds still while it is up (nothing else does: water keeps
+    // flowing, crops keep growing), so the beat reads as a pause for the news
+    // rather than as the game carrying on behind a panel.
+    CELEBRATE: {
+        ENABLED:   true,
+        MS:        3000,     // the whole beat, fades included
+        FADE_MS:   260,      // the dim coming in and going out
+        DIM_COLOR: '#0a1206',// the field behind it, darkened
+        DIM_ALPHA: 0.55,
+        ICON:      96,       // the crop / animal icon, px @ design scale
+        // The rays: one baked wedge-star, turned slowly. Big enough to reach
+        // past the icon, faint enough not to compete with it.
+        RAYS: {
+            ENABLED: true,
+            SIZE:    300,    // px @ design scale
+            COLOR:   0xfff3c4,
+            ALPHA:   0.45,
+            SPIN_MS: 9000,   // one full turn
+            WEDGES:  12,
+        },
+        TEXT: {
+            SIZE:    26,     // px @ design scale
+            COLOR:   '#ffffff',
+            STROKE:  '#2a1c06',
+            STROKE_W: 5,
+            GAP:     26,     // above the icon, px @ design scale
+            SUFFIX:  'added',
+        },
+        POP: { FROM: 0.6, MS: 420, EASE: 'Back.easeOut' },
+        // The icon keeps breathing once it has landed — a slow swell, so it is
+        // a thing being held up rather than a picture stuck on the rays.
+        PULSE: { ENABLED: true, AMOUNT: 0.06, MS: 900 },
+        DEPTH: 99600,        // over the roster (99000) and everything in the farm
     },
 
     BUTTON: {
@@ -646,7 +756,16 @@ var CONFIG = {
                              // started looking for the next thing to do, and the
                              // arrows arrive as an answer to a question they
                              // gave up on
-        SIZE:      23,       // arrow height, px @ design scale
+        SIZE:      23,       // arrow LENGTH along the way it points, px @ design
+                             // scale. Drawn in code, the same shape as the
+                             // roster's pointer, so the game has one arrow
+        W_FRAC:    1.35,     // its width across, as a fraction of that length
+        // PORTRAIT POINTS SIDEWAYS. The battery case stands on its end there and
+        // the three slots are stacked, so an arrow above a slot sits on top of
+        // the slot above it. Beside the case, pointing IN, is the only reading
+        // that stays clear — and it crosses the case's side edge the same way
+        // the landscape one crosses its top.
+        SIDE_GAP:  0.12,     // gap from the case's side edge, in slot widths
         // IT CROSSES THE CASE'S TOP EDGE rather than hovering above it. Ending
         // outside the slot leaves the arrow pointing at a boundary; driving it
         // INTO the slot is what says "in here" rather than "down there".
@@ -2023,7 +2142,7 @@ var CONFIG = {
                 // the edge of the screen, while the eye is on the cut line. This
                 // puts what the machine is being fed where the work is.
                 BADGE: {
-                    ENABLED: true,
+                    ENABLED: false,
                     // A TRUE MINIATURE. Every dimension — the housing, its
                     // corners, the terminal, the stroke — is the panel's own
                     // battery case multiplied by SCALE. Nothing is restated

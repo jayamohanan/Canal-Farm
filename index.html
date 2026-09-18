@@ -46,8 +46,9 @@
 		/* ── Loading screen ──────────────────────────────────────────────────
 		   Plain HTML over the canvas rather than a Phaser scene, so it is on
 		   screen from the first paint: it covers phaser.min.js downloading and
-		   the font wait too, not only the asset loader. game.js fills the bar
-		   and fades it out when the loader completes. No art — all CSS. */
+		   the font wait too, not only the asset loader. The script below fills
+		   the bar until the game can, and game.js fades it out when the opening
+		   view is built. No art — all CSS. */
 		#loading-screen {
 			position: fixed;
 			inset: 0;
@@ -151,6 +152,56 @@
 		<div class="loading-track"><div class="loading-fill" id="loading-fill"></div></div>
 		<div class="loading-percent" id="loading-percent">0%</div>
 	</div>
+	<!-- THE BAR, FROM THE FIRST PAINT. It has to start moving before any of the
+	     game's own code exists: the longest part of the wait is the scripts
+	     below downloading, and the loader that reports real progress cannot run
+	     until they have. So the page drives the bar itself — an eased creep that
+	     slows as it goes and never passes its ceiling — and game.js takes over
+	     the moment it has real figures (window.__loading.takeOver).
+
+	     ONE OWNER OF THE BAR: everything that moves it goes through this object,
+	     so the creep and the real progress can never fight over the same pixels.
+	     It only ever moves forward. -->
+	<script>
+	(function () {
+		var fill  = document.getElementById('loading-fill');
+		var label = document.getElementById('loading-percent');
+		var box   = document.getElementById('loading-screen');
+		var shown = 0, raf = 0, creeping = true;
+		var CEIL = 0.6;      // the creep's limit: a bar resting here still looks
+		                     // like it has work left, where one resting at 95%
+		                     // looks stuck
+		var TAU  = 2.6;      // seconds; the creep covers ~63% of the gap to CEIL
+		                     // in one of these, so it eases rather than marches
+		var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+		function paint(v) {
+			if (v <= shown) return;            // never backwards
+			shown = v > 1 ? 1 : v;
+			var pct = Math.round(shown * 100);
+			if (fill)  fill.style.width = pct + '%';
+			if (label) label.textContent = pct + '%';
+			if (box)   box.setAttribute('aria-valuenow', pct);
+		}
+		function tick() {
+			var now = (window.performance && performance.now) ? performance.now() : Date.now();
+			paint(CEIL * (1 - Math.exp(-((now - t0) / 1000) / TAU)));
+			if (creeping) raf = window.requestAnimationFrame(tick);
+		}
+		window.__loading = {
+			value: function () { return shown; },
+			set: paint,
+			// REAL FIGURES FROM HERE ON. Called once the game's loader is running;
+			// whatever the creep reached is the floor the real progress starts
+			// from, so the hand-over is a jump forward or nothing at all.
+			takeOver: function () {
+				creeping = false;
+				if (raf) window.cancelAnimationFrame(raf);
+				raf = 0;
+			},
+		};
+		if (window.requestAnimationFrame) tick(); else creeping = false;
+	})();
+	</script>
 	<!-- Poki SDK. After the loading screen rather than in the head, so a slow
 	     fetch of it cannot hold back the screen's first paint. Blocked by an ad
 	     blocker, PokiSDK is simply undefined and game.js carries on without it. -->

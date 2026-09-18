@@ -16,16 +16,23 @@ class AssetManager {
             return this.loading.get(key);
         }
 
-        const promise = new Promise((resolve, reject) => {
-            this.scene.load.image(key, url);
-            this.scene.load.once(`filecomplete-image-${key}`, () => {
+        // RESOLVES EITHER WAY, and only on ITS OWN file. It used to reject, and
+        // to listen for the next 'loaderror' from ANY file — so one unrelated
+        // failed download rejected whichever battery happened to be in flight,
+        // and the await that was waiting on it threw. Whatever it was building
+        // was then never built.
+        const promise = new Promise((resolve) => {
+            const done = () => {
+                this.scene.load.off(`filecomplete-image-${key}`, ok);
+                this.scene.load.off('loaderror', fail);
                 this.loading.delete(key);
                 resolve();
-            });
-            this.scene.load.once('loaderror', () => {
-                this.loading.delete(key);
-                reject();
-            });
+            };
+            const ok = () => done();
+            const fail = (file) => { if (!file || file.key === key) done(); };
+            this.scene.load.on(`filecomplete-image-${key}`, ok);
+            this.scene.load.on('loaderror', fail);
+            this.scene.load.image(key, url);
             this.scene.load.start();
         });
 
@@ -40,11 +47,48 @@ class AssetManager {
         return this.ensureImage(key, `graphics/battery/${data.fileName}`);
     }
 
+    // A battery texture that EXISTS RIGHT NOW: the level's own if it is in
+    // hand, otherwise the nearest lower one already loaded.
+    //
+    // Nothing waits for a download before it is drawn. A merge result held back
+    // until its picture arrived left a battery that was in the grid but on
+    // screen as nothing — and a cell that looked empty took another battery on
+    // top of it. The tile appears at once wearing the closest picture there is,
+    // and swaps to its own the moment that lands.
+    iconKey(iconLvl) {
+        for (let l = iconLvl; l >= 1; l--) {
+            const k = `battery${l}`;
+            if (this.scene.textures.exists(k)) return k;
+        }
+        return `battery${iconLvl}`;
+    }
+
+    // Draw `spr` as `iconLvl` as soon as that art is in hand. Safe to call for a
+    // texture already loaded — it simply sets it.
+    dressWhenReady(spr, iconLvl) {
+        const key = `battery${iconLvl}`;
+        if (this.scene.textures.exists(key)) { spr.setTexture(key); return; }
+        this.ensureBattery(iconLvl).then(() => {
+            if (spr && spr.scene && this.scene.textures.exists(key)) spr.setTexture(key);
+        });
+    }
+
     // Warm a battery level in the background (fire-and-forget).
     // ensureBattery already dedupes via textures.exists + the loading Map.
     prefetchBattery(level) {
         if (level < 1) return;
         this.ensureBattery(level).catch(() => {});
+    }
+
+    // ...and the few after it. A battery icon is ~2.5KB, so fetching several
+    // levels ahead costs almost nothing and means a fast run of merges never
+    // reaches a level whose picture has not arrived. Anything already loaded or
+    // in flight is skipped, so calling this on every merge is free.
+    prefetchAhead(level) {
+        const n = Math.max(1, CONFIG.BATTERY_PREFETCH_AHEAD !== undefined
+                            ? CONFIG.BATTERY_PREFETCH_AHEAD : 3);
+        const top = getHighestBatteryLevel();
+        for (let l = level; l < level + n && l <= top; l++) this.prefetchBattery(l);
     }
 }
 
@@ -423,11 +467,20 @@ class GameScene extends Phaser.Scene {
     // ================================================================
     preload() {
         loadMark('Phaser booted — preload starting');
+        // REAL FIGURES FROM HERE. The page's creep stops where it is and this
+        // loader's progress carries on from there.
+        if (typeof window !== 'undefined' && window.__loading) {
+            window.__loading.takeOver();
+            loadingShown = window.__loading.value();
+        }
         // The loading bar. This preload runs it up to LOAD_PRELOAD_CAP. The
         // opening view's remaining levels come in later batches, each of which
         // restarts the loader's own 0-1 — so each takes a share of what is left
         // instead, and the bar only ever moves forward.
-        let barFrom = LOAD_BOOT_SHARE, barTo = LOAD_PRELOAD_CAP, batch = 0;
+        // Whatever the creep reached is the floor: the first batch runs from
+        // there to LOAD_PRELOAD_CAP, so the hand-over is a jump forward or
+        // nothing at all, never a drop.
+        let barFrom = Math.max(LOAD_BOOT_SHARE, loadingShown), barTo = LOAD_PRELOAD_CAP, batch = 0;
         this.load.on('start', () => {
             if (batch++ === 0) return;
             barFrom = loadingShown;
@@ -581,7 +634,7 @@ class GameScene extends Phaser.Scene {
         this.createGrid();
         this.createCoinDisplay();
         this.spawnBatteryInGrid(0, 0, CONFIG.BATTERY_START_LEVEL);
-        this.assets.prefetchBattery(CONFIG.BATTERY_START_LEVEL + 1);
+        this.assets.prefetchAhead(CONFIG.BATTERY_START_LEVEL + 1);
         this.createButtons();
         this.createStartOverlay();
 
@@ -591,6 +644,7 @@ class GameScene extends Phaser.Scene {
         this.input.on('dragend',   this.onDragEnd,   this);
 
         this.startCharging();
+        this._startBatteryBackfill();
 
         // Debug: a line marking the partA / partB split — vertical in landscape
         // (left | right), horizontal in portrait (top / bottom). Drawn on the
@@ -2905,7 +2959,22 @@ class GameScene extends Phaser.Scene {
         const cx      = B.width / 2;
 
         this.roster = { blocks: [], filled: 0, size, y, gap, step, cx, pitch,
-                        shift: 0, slideTw: null, produceSlot: null, block: undefined };
+                        shift: 0, slideTw: null, produceSlot: null, block: undefined,
+                        mark: null, markTw: null };
+
+        // THE POINTER at the cell this level is being dug for. One shape for the
+        // whole strip, moved from cell to cell — it marks a position, and there
+        // is only ever one position to mark.
+        const NM = R.NEXT_MARK || {};
+        if (NM.ENABLED !== false) {
+            // The same arrow the slot hints use — one shape for the whole game.
+            const g = this._makeArrow('s', (NM.H || 9) * s, (NM.W || 14) * s,
+                    NM.COLOR !== undefined ? NM.COLOR : 0xffe9a8,
+                    NM.STROKE !== undefined ? NM.STROKE : 0x2b2013,
+                    (NM.STROKE_W !== undefined ? NM.STROKE_W : 2) * s)
+                .setScrollFactor(0).setDepth(depth + 3).setAlpha(0);
+            this.roster.mark = this._addB(g, null);
+        }
 
         const GL = R.GROUP_LINE || {};
         for (let b = 0; b < count; b++) {
@@ -2939,8 +3008,21 @@ class GameScene extends Phaser.Scene {
                 // where it is NOW. Everything aiming at a cell — the icon's
                 // flight, the caption under it — reads `x`, so nothing else has
                 // to know the strip moves.
-                const slot = { box, baseX: bx, x: bx, y, icon: null };
+                const slot = { box, baseX: bx, x: bx, y, icon: null, ghost: null };
                 this._paintSlot(slot, false);
+                // WHAT THIS CELL IS FOR, in shadow until it is earned. Its own
+                // level's prize, so the strip is a list of the farms to come.
+                const GH = R.GHOST || {};
+                const gic = GH.ENABLED === false ? null : this._iconOf(this._levelPrize(b * n + i));
+                if (gic) {
+                    const fit = size * (R.ICON_FRAC !== undefined ? R.ICON_FRAC : 0.78);
+                    slot.ghost = this._addB(this.add.image(bx, y, gic.sheet, gic.frame)
+                        .setScrollFactor(0)
+                        .setDisplaySize(fit, fit)
+                        .setTint(GH.COLOR !== undefined ? GH.COLOR : 0x000000)
+                        .setAlpha(GH.ALPHA !== undefined ? GH.ALPHA : 0.28)
+                        .setDepth(depth + 1), null);
+                }
                 blk.slots.push(slot);
             }
 
@@ -2980,6 +3062,7 @@ class GameScene extends Phaser.Scene {
             }
         }
         this._setRosterLabel();
+        this._markRosterNext();     // the first level's cell, from the off
     }
 
     // The block being played, or null before the first one is known.
@@ -3002,6 +3085,7 @@ class GameScene extends Phaser.Scene {
                 sl.x = sl.baseX + ro.shift;
                 if (sl.box && sl.box.scene) sl.box.x = sl.x;
                 if (sl.icon && sl.icon.scene) sl.icon.x = sl.x;
+                if (sl.ghost && sl.ghost.scene) sl.ghost.x = sl.x;
             }
             if (blk.label && blk.label.scene) blk.label.x = blk.label.baseX + ro.shift;
         }
@@ -3011,6 +3095,34 @@ class GameScene extends Phaser.Scene {
         if (ro.produce && ro.produce.scene && ro.produceSlot) {
             ro.produce.x = ro.produceSlot.x;
         }
+        if (ro.mark && ro.mark.scene && ro.markSlot) ro.mark.x = ro.markSlot.x;
+    }
+
+    // Put the pointer over the cell the CURRENT level will fill — the first one
+    // in the played block that is still empty — or take it off the strip when
+    // the block is complete. Called whenever the block, the fill count or the
+    // strip's position changes.
+    _markRosterNext() {
+        const R = CONFIG.ROSTER || {}, NM = R.NEXT_MARK || {}, ro = this.roster;
+        if (!ro || !ro.mark || !ro.mark.scene) return;
+        const blk = this._rosterBlock();
+        const slot = blk && blk.slots[ro.filled];
+        ro.markSlot = slot || null;
+        if (!slot) {                                  // block full: nothing to point at
+            this.tweens.killTweensOf(ro.mark);
+            ro.markTw = null;
+            ro.mark.setAlpha(0);
+            return;
+        }
+        const s = this.layoutConfig.scale;
+        const top = slot.y - ro.size / 2 - (NM.GAP !== undefined ? NM.GAP : 5) * s;
+        ro.mark.setPosition(slot.x, top).setAlpha(1);
+        if (ro.markTw) return;                        // already bobbing
+        const bob = (NM.BOB !== undefined ? NM.BOB : 3) * s;
+        ro.markTw = this.tweens.add({
+            targets: ro.mark, y: top - bob,
+            duration: NM.BOB_MS || 760, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+        });
     }
 
     // LIGHT THE BLOCK BEING PLAYED, pull the rest back.
@@ -3036,6 +3148,15 @@ class GameScene extends Phaser.Scene {
             blk.tw = this.tweens.add({ targets: lot, alpha: a,
                 duration: ms, ease: 'Sine.easeOut',
                 onComplete: () => { blk.tw = null; } });
+            // The silhouettes ride the same light, scaled to their own faintness
+            // — dimmed to `a` outright they would come out as dark as a filled
+            // icon in a dimmed block.
+            const gA = (R.GHOST || {}).ALPHA !== undefined ? R.GHOST.ALPHA : 0.28;
+            const ghosts = blk.slots.map((sl) => sl.ghost).filter((o) => o && o.scene);
+            if (ghosts.length) {
+                this.tweens.add({ targets: ghosts, alpha: gA * a,
+                    duration: ms, ease: 'Sine.easeOut' });
+            }
         });
         // THE TWO RULES AROUND THE PLAYED BLOCK stay lit with it — they are the
         // marks that say where this set begins and ends, so they belong to the
@@ -3127,6 +3248,7 @@ class GameScene extends Phaser.Scene {
         ro.filled = 0;
         this._setRosterProduce(null, null);   // the caption belongs to one cell
         this._slideRoster(i, first);          // the first block is already there
+        this._markRosterNext();
     }
 
     // Name the newest slot's produce, under it.
@@ -3180,6 +3302,181 @@ class GameScene extends Phaser.Scene {
     // it, including the ones that never animate. The level is not finished until
     // its slot is filled, so a path that quietly returned without calling back
     // would strand the whole handover.
+    // ── THE UNLOCK MOMENT ────────────────────────────────────────────────────
+    // The farm is in: hold up what it grew, in the middle of the FARM half, over
+    // a dimmed field and a slowly turning burst of rays. `done` runs when it is
+    // over, so the roster flight and the camera pan follow it rather than
+    // sharing the beat.
+    //
+    // ON THE FARM CAMERA ONLY (_addB with no segment, scroll factor 0): the
+    // merge grid is not dimmed, not covered and stays playable — the player's
+    // hands are never taken off it. It belongs to no level either, so a level
+    // torn down under it cannot take it with it.
+    _celebrateCrop(name, done) {
+        const C = CONFIG.CELEBRATE || {};
+        const fin = () => { this._celebrating = false; if (done) done(); };
+        if (C.ENABLED === false || !name) { fin(); return; }
+        const L = this.layoutConfig, B = L.partB, s = L.scale;
+        if (!B) { fin(); return; }
+        // A zero-scroll object on the farm camera is measured from that camera's
+        // own viewport; with no farm camera it is plain screen space.
+        const camH = this.camB ? this.camB.height : B.height;
+        const ox = this.camB ? 0 : B.x, oy = this.camB ? 0 : B.y;
+        const cx = ox + B.width / 2, cy = oy + camH / 2;
+        const depth = C.DEPTH !== undefined ? C.DEPTH : 99600;
+        const fade = C.FADE_MS !== undefined ? C.FADE_MS : 260;
+
+        const parts = [];
+        const put = (o, d) => {
+            o.setScrollFactor(0).setDepth(d).setAlpha(0);
+            this._addB(o, null);
+            parts.push(o);
+            return o;
+        };
+
+        // THE FIELD GOES QUIET BEHIND IT. Sized to the farm camera, so it stops
+        // exactly at the boundary the grid begins at.
+        put(this.add.rectangle(cx, cy, B.width, camH,
+            hexColor(C.DIM_COLOR || '#0a1206'), 1), depth);
+
+        const R = C.RAYS || {};
+        let rays = null;
+        if (R.ENABLED !== false) {
+            this._ensureRayTexture(R.WEDGES || 12);
+            const rSize = (R.SIZE || 300) * s;
+            rays = put(this.add.image(cx, cy, 'burst_rays')
+                .setDisplaySize(rSize, rSize)
+                .setTint(R.COLOR !== undefined ? R.COLOR : 0xfff3c4), depth + 0.01);
+            // One slow turn, forever: it is a light behind the thing, not an
+            // animation to watch in its own right.
+            this.tweens.add({ targets: rays, angle: 360,
+                duration: R.SPIN_MS || 9000, repeat: -1, ease: 'Linear' });
+        }
+
+        // The same icon the roster and the tally use, so the three agree.
+        const ic = this._iconOf(name);
+        const iconPx = (C.ICON || 96) * s;
+        let icon = null;
+        if (ic) {
+            icon = put(this.add.image(cx, cy, ic.sheet, ic.frame)
+                .setDisplaySize(iconPx, iconPx), depth + 0.02);
+        }
+
+        const T = C.TEXT || {};
+        const pretty = String(name).replace(/[-_]/g, ' ')
+            .replace(/\b\w/g, (m) => m.toUpperCase());
+        const label = put(this.add.text(cx,
+                cy - iconPx / 2 - (T.GAP !== undefined ? T.GAP : 26) * s,
+                `${pretty} ${T.SUFFIX || 'cultivated successfully'}`, {
+                fontFamily: CONFIG.FONT_FAMILY,
+                fontStyle: CONFIG.FONT_WEIGHT,
+                fontSize: Math.max(10, Math.round((T.SIZE || 26) * s)) + 'px',
+                color: T.COLOR || '#ffffff',
+                stroke: T.STROKE || '#2a1c06',
+                strokeThickness: Math.max(1, Math.round((T.STROKE_W || 5) * s)),
+            }).setOrigin(0.5, 1), depth + 0.02);
+
+        // THE MACHINE WAITS. Only the machine: the water still runs and the
+        // crops still grow, so the farm behind the panel is alive.
+        //
+        // STOPPED, not merely un-advanced. _updateTunnel returning early leaves
+        // the belt turning and the spoil flying on the last frame's settings —
+        // a rig working hard at ground it is not touching. Everything the
+        // machine does is switched off here and switched back on by the first
+        // frame after the beat.
+        this._celebrating = true;
+        const tn = this.tunnel;
+        if (tn) {
+            this._setTrencherRunning(tn, false, false);
+            if (tn.bore) this._runSpoil(tn.bore, tn.entryY - tn.progressPx, false, tn);
+        }
+
+        // In: everything fades up together, and the icon and its words spring in
+        // from small — the dim arriving on its own would read as a screen going
+        // dark rather than as something being presented.
+        const P = C.POP || {};
+        const from = P.FROM !== undefined ? P.FROM : 0.6;
+        for (const o of parts) {
+            this.tweens.add({ targets: o, alpha: o === parts[0]
+                ? (C.DIM_ALPHA !== undefined ? C.DIM_ALPHA : 0.55)
+                : (o === rays ? (R.ALPHA !== undefined ? R.ALPHA : 0.45) : 1),
+                duration: fade, ease: 'Sine.easeOut' });
+        }
+        for (const o of [icon, label]) {
+            if (!o) continue;
+            const sx = o.scaleX, sy = o.scaleY;
+            o.setScale(sx * from, sy * from);
+            const pop = this.tweens.add({ targets: o, scaleX: sx, scaleY: sy,
+                duration: P.MS || 420, ease: P.EASE || 'Back.easeOut' });
+            // ...and then it BREATHES. Held dead still against turning rays the
+            // icon reads as a picture pasted on the light; a slow swell of a few
+            // per cent reads as the thing being presented. Only the icon: the
+            // words moving with it would look like the whole panel wobbling.
+            if (o !== icon) continue;
+            const B = C.PULSE || {};
+            if (B.ENABLED === false) continue;
+            const amt = B.AMOUNT !== undefined ? B.AMOUNT : 0.06;
+            pop.on('complete', () => {
+                if (!o.scene) return;
+                this.tweens.add({ targets: o,
+                    scaleX: sx * (1 + amt), scaleY: sy * (1 + amt),
+                    duration: B.MS || 900, yoyo: true, repeat: -1,
+                    ease: 'Sine.easeInOut' });
+            });
+        }
+
+        // Out, and gone. The whole beat is MS, so the hold is what is left of it
+        // once both fades are paid for.
+        const total = C.MS !== undefined ? C.MS : 3000;
+        const hold = Math.max(0, total - fade * 2);
+        this.time.delayedCall(fade + hold, () => {
+            if (!parts.length || !parts[0].scene) { fin(); return; }
+            this.tweens.add({ targets: parts, alpha: 0, duration: fade,
+                ease: 'Sine.easeIn',
+                onComplete: () => {
+                    for (const o of parts) { this.tweens.killTweensOf(o); o.destroy(); }
+                    fin();
+                },
+            });
+        });
+    }
+
+    // The burst behind the icon: `n` white wedges radiating from the centre,
+    // baked once and tinted per use. The middle is erased so the icon sits in
+    // light rather than on a hard star, and the rim is faded so the rays end in
+    // the field rather than at a circular edge.
+    _ensureRayTexture(n) {
+        if (this.textures.exists('burst_rays')) return;
+        const D = 512, t = this.textures.createCanvas('burst_rays', D, D);
+        const c = t.getContext();
+        c.translate(D / 2, D / 2);
+        c.fillStyle = '#ffffff';
+        const wedges = Math.max(3, n || 12);
+        for (let i = 0; i < wedges; i++) {
+            const a0 = (i * 2 * Math.PI) / wedges;
+            c.beginPath();
+            c.moveTo(0, 0);
+            c.arc(0, 0, D / 2, a0, a0 + (Math.PI / wedges) * 0.62);
+            c.closePath();
+            c.fill();
+        }
+        // Erase the middle, then fade the outer half.
+        c.globalCompositeOperation = 'destination-out';
+        const hole = c.createRadialGradient(0, 0, 0, 0, 0, D * 0.30);
+        hole.addColorStop(0, 'rgba(0,0,0,1)');
+        hole.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = hole;
+        c.beginPath(); c.arc(0, 0, D * 0.30, 0, Math.PI * 2); c.fill();
+        const rim = c.createRadialGradient(0, 0, D * 0.26, 0, 0, D * 0.5);
+        rim.addColorStop(0, 'rgba(0,0,0,0)');
+        rim.addColorStop(1, 'rgba(0,0,0,1)');
+        c.fillStyle = rim;
+        c.beginPath(); c.arc(0, 0, D * 0.5, 0, Math.PI * 2); c.fill();
+        c.globalCompositeOperation = 'source-over';
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        t.refresh();
+    }
+
     _fillRosterSlot(name, from, done) {
         const R = CONFIG.ROSTER || {}, ro = this.roster;
         // THE ROW WALKS ON when the icon has landed, not when it set off — the
@@ -3208,6 +3505,12 @@ class GameScene extends Phaser.Scene {
 
         const slot = blk.slots[ro.filled++];
         this._paintSlot(slot, true);
+        this._markRosterNext();               // on to the cell this level's successor fills
+        // The shadow stands until the real icon is home — cleared at take-off,
+        // the cell would sit blank through the whole flight.
+        const clearGhost = () => {
+            if (slot.ghost) { this.tweens.killTweensOf(slot.ghost); slot.ghost.destroy(); slot.ghost = null; }
+        };
         // The icon is born after its block was lit, so it missed that tween and
         // would sit at full alpha in a dimmed block — or, once dimming is on a
         // block the player has left, at full alpha in a dark one.
@@ -3215,6 +3518,7 @@ class GameScene extends Phaser.Scene {
         // The caption lands WITH the icon, so it is written at each arrival
         // rather than here — except when there is no icon to wait for.
         if (!ic) {
+            clearGhost();
             this._setRosterProduce(slot, name);
             end(); return;
         }
@@ -3289,8 +3593,8 @@ class GameScene extends Phaser.Scene {
             spr.setScale(sx * 1.6, sy * 1.6).setAlpha(0);
             this.tweens.add({ targets: spr, scaleX: sx, scaleY: sy, alpha: litA,
                 duration: ms, ease: 'Back.easeOut',
-                onComplete: () => { this._setRosterProduce(slot, name); end(); } });
-        } else { this._setRosterProduce(slot, name); end(); }
+                onComplete: () => { clearGhost(); this._setRosterProduce(slot, name); end(); } });
+        } else { clearGhost(); this._setRosterProduce(slot, name); end(); }
     }
 
     // Where a world point sits for a PINNED object on the same camera.
@@ -6175,6 +6479,55 @@ class GameScene extends Phaser.Scene {
         return { byMarker, any: clean(def.CROP) || (cy.length ? cy[0] : null) };
     }
 
+    // ── EVERY BATTERY, QUIETLY, ONCE THE GAME IS RUNNING ─────────────────────
+    // The icons are ~2.5KB each and the whole set is 250KB, so nothing is gained
+    // by making a player wait for one mid-merge — but nothing is gained by
+    // putting 250KB in front of the first frame either.
+    //
+    // So they are fetched AFTER the loading screen has gone, a few at a time,
+    // in the background. A player who loses signal (or a phone that drops to no
+    // data on a train) keeps merging as far as they like, and the opening load
+    // never grew. Levels the player is about to reach are fetched ahead of this
+    // anyway (prefetchAhead), which is what covers the first minute.
+    _startBatteryBackfill() {
+        const B = CONFIG.BATTERY_BACKFILL || {};
+        if (B.ENABLED === false) return;
+        const top = getHighestBatteryLevel();
+        let next = 1;
+        // The timer is held rather than read from the callback's arguments:
+        // Phaser hands a repeating callback whatever is in `args`, not the event
+        // itself, so asking the argument to remove itself throws.
+        let ev = null;
+        ev = this.time.addEvent({
+            delay: B.EVERY_MS !== undefined ? B.EVERY_MS : 900,
+            loop: true,
+            callback: () => {
+                // NOT WHILE THE OPENING VIEW IS STILL COMING IN. These are the
+                // least urgent files in the game; they wait their turn behind
+                // the art the player is looking at.
+                if (!loadingScreenDone) return;
+                let sent = 0;
+                const batch = Math.max(1, B.BATCH || 4);
+                while (next <= top && sent < batch) {
+                    const lvl = next++;
+                    if (this.textures.exists(`battery${lvl}`)) continue;
+                    this.assets.prefetchBattery(lvl);
+                    sent++;
+                }
+                if (next > top && ev) ev.remove();
+            },
+        });
+    }
+
+    // WHAT A LEVEL IS FOR — the thing that earns its roster slot. A ranch's
+    // prize is the ANIMAL (its crops are feed); everything else's is the crop it
+    // adds. One answer, used by the strip's silhouettes, the unlock beat and the
+    // slot that is finally filled, so the three can never name different things.
+    _levelPrize(index) {
+        const def = this._levelDef(index) || {};
+        return (def.RANCH && def.RANCH.SPECIES) || this._cropForLevel(index);
+    }
+
     // THE LEVEL'S OWN CROP — the highest marker it names, or its single crop.
     //
     // A field carries the crops before it plus one of its own, and the new one
@@ -7434,12 +7787,26 @@ class GameScene extends Phaser.Scene {
     // Big numbers, readably. The economy reaches 27 trillion by level 65, so
     // every figure the player sees goes through this.
     _bigNum(v) {
+        const N = CONFIG.NUMBERS || {};
         const a = Math.max(0, v);
-        if (a >= 1e12) return (a / 1e12).toFixed(a < 1e13 ? 1 : 0) + 'T';
-        if (a >= 1e9)  return (a / 1e9 ).toFixed(a < 1e10 ? 1 : 0) + 'B';
-        if (a >= 1e6)  return (a / 1e6 ).toFixed(a < 1e7  ? 1 : 0) + 'M';
-        if (a >= 1e3)  return (a / 1e3 ).toFixed(a < 1e4  ? 1 : 0) + 'K';
-        return String(Math.ceil(a));
+        // SHORTEN ONLY WHEN IT BUYS SOMETHING. Abbreviating from a thousand up
+        // costs the player the very granularity they are watching: coins going
+        // 1,240 → 1,260 → 1,290 reads as progress, and the same run as
+        // "1.2K → 1.2K → 1.3K" reads as stuck. Full figures hold until they stop
+        // fitting (ABBREV_FROM), and only then does a unit take over.
+        const from = N.ABBREV_FROM !== undefined ? N.ABBREV_FROM : 1e6;
+        if (a >= from) {
+            // ONE DECIMAL IN EACH UNIT'S FIRST DECADE — 1.2M, 9.9M, then 12M —
+            // so a big figure still visibly moves instead of sitting on the same
+            // two digits for a minute.
+            for (const [at, suffix] of [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']]) {
+                if (a >= at) return (a / at).toFixed(a < at * 10 ? 1 : 0) + suffix;
+            }
+        }
+        // Grouped, so six digits read at a glance: 50,000 not 50000.
+        const whole = String(Math.ceil(a));
+        const sep = N.SEPARATOR !== undefined ? N.SEPARATOR : ',';
+        return sep ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, sep) : whole;
     }
 
     // What this dig still has to pay for, from wherever the machine currently
@@ -7737,6 +8104,10 @@ class GameScene extends Phaser.Scene {
     _updateTunnel(time) {
         const tn = this.tunnel;
         if (!tn || (tn.open && !tn.flooding)) return;
+        // THE MACHINE WAITS OUT THE UNLOCK BEAT (see _celebrateCrop). `lastTime`
+        // is kept current so the frame it resumes on is a normal one, not a
+        // three-second lurch.
+        if (this._celebrating) { tn.lastTime = time; return; }
         const dt = tn.lastTime ? Math.min((time - tn.lastTime) / 1000, 0.05) : 0;
         tn.lastTime = time;
         if (dt <= 0) return;
@@ -8379,7 +8750,7 @@ class GameScene extends Phaser.Scene {
             // asking the game "what is this level" answers with the one being
             // dug now.
             const def  = seg ? this._levelDef(seg.levelIndex || 0) : null;
-            const herd = def && def.RANCH && def.RANCH.SPECIES;
+            const herd = def && def.RANCH && def.RANCH.SPECIES;   // see _levelPrize
             const list = (seg && seg.crops) || [];
             // THE LEVEL'S OWN CROP, not whatever happened to be planted first.
             // A mixed field carries the crops of the levels before it too, and
@@ -8434,9 +8805,13 @@ class GameScene extends Phaser.Scene {
                 });
             };
             if (name) {
+                // WHERE THE ICON WILL FLY FROM, read NOW: the celebration runs
+                // for seconds first, and the plant it launches from may be gone
+                // by the time the flight starts.
                 const s = src && src.sprite;
-                this._fillRosterSlot(name,
-                    s && s.scene ? this._worldToScreen(s.x, s.y) : null, finish);
+                const from = s && s.scene ? this._worldToScreen(s.x, s.y) : null;
+                // The news first, then the slot it fills, then the camera.
+                this._celebrateCrop(name, () => this._fillRosterSlot(name, from, finish));
             } else finish();
         };
         wait();
@@ -8832,7 +9207,6 @@ class GameScene extends Phaser.Scene {
 
 
     async addBatteryToSlot(slotIndex, level) {
-        await this.assets.ensureBattery(level); // ADD THIS
         if (slotIndex < 0 || slotIndex >= 3) return;
         if (this.chargingSlots[slotIndex] !== null) return;
         const p   = this.platforms[slotIndex];
@@ -8849,7 +9223,11 @@ class GameScene extends Phaser.Scene {
             .setDepth(10)
             .setInteractive({ draggable: true, useHandCursor: true });
 
-        const batterySprite = this.add.image(p.slotX, p.slotY + yOff, `battery${batteryIconLevel}`);
+        // As in the grid: drawn on this frame with whatever art exists, dressed
+        // in its own the moment that arrives.
+        const batterySprite = this.add.image(p.slotX, p.slotY + yOff,
+            this.assets.iconKey(batteryIconLevel));
+        this.assets.dressWhenReady(batterySprite, batteryIconLevel);
         batterySprite.setDisplaySize(this.slotBatterySize, this.slotBatterySize);
         batterySprite.setDepth(11);
 
@@ -9093,7 +9471,6 @@ class GameScene extends Phaser.Scene {
     }
 
     async spawnBatteryInGrid(row, col, level) {
-        await this.assets.ensureBattery(level); // ADD THIS
         const cell = this.gridCells[row][col];
         const iconLvl = getBatteryIconLevel(level);
 
@@ -9103,9 +9480,14 @@ class GameScene extends Phaser.Scene {
             .setDepth(10)
             .setInteractive({ draggable: true, useHandCursor: true });
 
-        const battery = this.add.image(cell.x, cell.y + this.batteryYOffset, `battery${iconLvl}`)
+        // BUILT NOW, whatever art is to hand (see AssetManager.iconKey). The
+        // cell is filled on this frame, so nothing can be dropped into it while
+        // a picture downloads.
+        const battery = this.add.image(cell.x, cell.y + this.batteryYOffset,
+                this.assets.iconKey(iconLvl))
             .setDisplaySize(this.batteryDisplaySize, this.batteryDisplaySize)
             .setDepth(11);
+        this.assets.dressWhenReady(battery, iconLvl);
 
         const levelText = this.add.text(
             cell.x, cell.y + this.batteryYOffset + this.levelTextYOffset,
@@ -9187,11 +9569,13 @@ class GameScene extends Phaser.Scene {
         this.spawnButtonBg = spawnBg;
         this.spawnButtonIcon = null;
 
-        // Wait for battery texture then add icon
+        // The button's own battery, drawn at once with whatever art exists and
+        // dressed in its own when that lands — the button is pressable from the
+        // first frame, so its icon must be there from the first frame too.
         const iconLvl = getBatteryIconLevel(this.spawnButtonLevel);
-        await this.assets.ensureBattery(iconLvl);
-        const spawnIcon = this.add.image(L.spawnBattIconX, 0, `battery${iconLvl}`)
+        const spawnIcon = this.add.image(L.spawnBattIconX, 0, this.assets.iconKey(iconLvl))
             .setDisplaySize(L.spawnBattIconSize, L.spawnBattIconSize);
+        this.assets.dressWhenReady(spawnIcon, iconLvl);
         spawnBtn.add(spawnIcon);
         this.spawnButtonIcon = spawnIcon;
 
@@ -9393,82 +9777,95 @@ class GameScene extends Phaser.Scene {
             () => { this.slotHintPending = false; this._showSlotHint(); });
     }
 
-    // AN ARROW OVER EACH EMPTY SLOT, nodding toward it.
+    // AN ARROW AT EACH EMPTY SLOT, nodding toward it.
     //
     // Three of them rather than one, because the lesson is about the row: a
     // single arrow would read as "that slot", and the player would wonder what
-    // the other two are for. Down-and-back rather than a full bounce — the
-    // motion has to point, and a symmetric bob points at nothing.
+    // the other two are for. In-and-back rather than a full bounce — the motion
+    // has to point, and a symmetric bob points at nothing.
+    //
+    // WHICH WAY depends on the layout. Landscape stands them above the slots
+    // and drives them DOWN across the case's top edge. Portrait stands the case
+    // on its end, so an arrow above a slot would sit on the slot above it —
+    // there they go to the LEFT of the case and drive RIGHT into it.
     _showSlotHint() {
         const H = CONFIG.SLOT_HINT || {};
         if (H.ENABLED === false || this.slotHintDone || this.slotHints) return;
-        if (!this.textures.exists('down_arrow') || !this.platforms) return;
+        if (!this.platforms) return;
         // Not if the player got there first — three seconds is long enough for
         // someone who already understood to have filled a slot, and an arrow
         // pointing at a job already done is worse than no arrow.
         if (this._anySlotFilled()) { this.slotHintDone = true; return; }
 
         const s = this.layoutConfig.scale;
+        const P = CONFIG.POINTER || {};
+        const side = !!this.isPortrait;          // beside the case, or above it
+        const len  = (H.SIZE || 23) * s;
         this.slotHints = [];
         for (const p of this.platforms) {
             if (!p || p.slotX === undefined) continue;
             const size = p.slotSize || (100 * s);
-            const top  = p.slotY - size / 2;              // the case's top edge
-            // THE SAME INK AS THE POINTER, and drawn the same way. The art is a
-            // white silhouette, so a single tint would give a flat shape where
-            // the pointer has an outline — and two hints in the same tutorial
-            // looking like two different things is worse than either looking
-            // plain. Eight offset copies underneath make the outline; the ninth,
-            // on top, is the arrow itself.
-            const P = CONFIG.POINTER || {};
-            const strokeC = parseInt((P.STROKE_COLOR || '#6d5727').substring(1), 16);
-            const fillC   = parseInt((P.FILL_COLOR   || '#ffd251').substring(1), 16);
-            const hh = (H.SIZE || 46) * s;
-            const img = this._addA(this.add.container(p.slotX, top)
+            // THE SAME ARROW AS THE ROSTER'S POINTER, drawn rather than drawn
+            // ON: one shape, one outline, no art file, and it turns to face
+            // whichever way the layout needs without a second drawing.
+            const arrow = this._addA(this._makeArrow(side ? 'e' : 's', len,
+                    len * (H.W_FRAC !== undefined ? H.W_FRAC : 1.35),
+                    P.FILL_COLOR || '#ffd251', P.STROKE_COLOR || '#6d5727',
+                    (P.STROKE_WIDTH || 3) * s)
                 .setDepth(103).setAlpha(0));
-            const leaf = (tint, dx, dy) => {
-                const a = this.add.image(dx, dy, 'down_arrow').setTint(tint);
-                a.displayHeight = hh;
-                a.displayWidth  = hh * (a.frame.width / a.frame.height);
-                img.add(a);
-                return a;
-            };
-            const ring = Math.max(1, (P.STROKE_WIDTH || 3) * s);
-            for (let ang = 0; ang < 360; ang += 45) {
-                const rad = ang * Math.PI / 180;
-                leaf(strokeC, Math.cos(rad) * ring, Math.sin(rad) * ring);
+            // IT CROSSES THE CASE'S EDGE rather than hovering outside it. The
+            // crossing is what reads as "in here" instead of "over there".
+            //
+            // The start is clamped on screen: measured from the slot alone it
+            // lands off the canvas whenever the slots sit hard against an edge,
+            // and most of the stroke then happens where nobody can see it.
+            const run = (H.TRAVEL !== undefined ? H.TRAVEL : 0.193) * size;
+            if (side) {
+                const gap   = (H.SIDE_GAP !== undefined ? H.SIDE_GAP : 0.12) * size;
+                const left  = p.slotX - size / 2;
+                const floor = len / 2 + 4 * s;
+                const x0 = Math.max(floor, left - gap - len / 2);
+                arrow.setPosition(x0, p.slotY);
+                this.tweens.add({ targets: arrow, x: x0 + run,
+                    duration: H.MS || 380, ease: H.EASE || 'Sine.easeInOut',
+                    yoyo: true, repeat: -1 });
+            } else {
+                const top   = p.slotY - size / 2;
+                const floor = len / 2 + 4 * s;
+                const y0 = Math.max(floor,
+                    top - (H.START_ABOVE !== undefined ? H.START_ABOVE : 0.25) * size);
+                arrow.setPosition(p.slotX, y0);
+                this.tweens.add({ targets: arrow, y: y0 + run,
+                    duration: H.MS || 380, ease: H.EASE || 'Sine.easeInOut',
+                    yoyo: true, repeat: -1 });
             }
-            leaf(fillC, 0, 0);
-            // IT STARTS ABOVE THE CASE and travels DOWN a set distance, so the
-            // stroke carries the arrow across the top edge — the crossing is
-            // what reads as "in here". Start and distance are independent now:
-            // shortening the stroke pulls its REACH back, not its origin. They
-            // were coupled before, with the start measured back from the end, so
-            // halving the run moved the arrow instead of shortening it.
-            //
-            // The start is clamped on screen. Measured from the slot alone it
-            // sits above the canvas whenever the slots are high in the panel,
-            // and most of the stroke happens where nobody can see it.
-            //
-            // `hh` rather than the container's own displayHeight: a container
-            // has no intrinsic size — its height is 0 until one is set — so
-            // asking it how tall it is returns nothing, and SETTING its
-            // displayHeight divides by that nothing and scales it to infinity.
-            // That is what made these disappear.
-            const floor = hh / 2 + 4 * s;
-            const yStart = Math.max(floor,
-                top - (H.START_ABOVE !== undefined ? H.START_ABOVE : 0.25) * size);
-            const yEnd = yStart + (H.TRAVEL !== undefined ? H.TRAVEL : 0.275) * size;
-            img.y = yStart;
-            this.tweens.add({ targets: img, alpha: 1,
+            this.tweens.add({ targets: arrow, alpha: 1,
                 duration: H.FADE_MS !== undefined ? H.FADE_MS : 260 });
-            this.tweens.add({
-                targets: img, y: yEnd,
-                duration: H.MS || 380, ease: H.EASE || 'Sine.easeInOut',
-                yoyo: true, repeat: -1,
-            });
-            this.slotHints.push(img);
+            this.slotHints.push(arrow);
         }
+    }
+
+    // ONE ARROW, DRAWN. A filled triangle with an outline, its apex on the
+    // object's own origin line and pointing `dir` ('s' down, 'e' right, 'n', 'w')
+    // — so placing one is a single point wherever it is used. `len` is along the
+    // way it points, `wide` across.
+    _makeArrow(dir, len, wide, fill, stroke, strokeW) {
+        const g = this.add.graphics();
+        g.fillStyle(hexColor(fill), 1);
+        g.lineStyle(Math.max(1, strokeW || 2), hexColor(stroke), 1);
+        const L = len / 2, W = wide / 2;
+        const pts = dir === 'e' ? [[-L, -W], [-L, W], [L, 0]]
+                  : dir === 'w' ? [[L, -W], [L, W], [-L, 0]]
+                  : dir === 'n' ? [[-W, L], [W, L], [0, -L]]
+                  :               [[-W, -L], [W, -L], [0, L]];   // 's'
+        g.beginPath();
+        g.moveTo(pts[0][0], pts[0][1]);
+        g.lineTo(pts[1][0], pts[1][1]);
+        g.lineTo(pts[2][0], pts[2][1]);
+        g.closePath();
+        g.fillPath();
+        g.strokePath();
+        return g;
     }
 
     _anySlotFilled() {
@@ -9525,9 +9922,9 @@ class GameScene extends Phaser.Scene {
                 this.spawnCost = nl * 10;
                 this.spawnButtonText.setText(this._bigNum(this.spawnCost));
                 const iconLvl = getBatteryIconLevel(nl);
-                await this.assets.ensureBattery(iconLvl);
                 if (this.spawnButtonIcon) {
-                    this.spawnButtonIcon.setTexture(`battery${iconLvl}`);
+                    this.spawnButtonIcon.setTexture(this.assets.iconKey(iconLvl));
+                    this.assets.dressWhenReady(this.spawnButtonIcon, iconLvl);
                 }
             }
         }
@@ -9669,7 +10066,7 @@ class GameScene extends Phaser.Scene {
         this.spawnBatteryInGrid(tRow, tCol, newLevel);
         if (newLevel > this.highestBatteryLevel) {
             this.highestBatteryLevel = newLevel; this.updateSpawnButton();
-            this.assets.prefetchBattery(newLevel + 1);
+            this.assets.prefetchAhead(newLevel + 1);
         }
         this.createMergeEffect(this.gridCells[tRow][tCol].x, this.gridCells[tRow][tCol].y);
     }
@@ -9770,7 +10167,7 @@ class GameScene extends Phaser.Scene {
         this.addBatteryToSlot(targetSlotIndex, newLevel);
         if (newLevel > this.highestBatteryLevel) {
             this.highestBatteryLevel = newLevel; this.updateSpawnButton();
-            this.assets.prefetchBattery(newLevel + 1);
+            this.assets.prefetchAhead(newLevel + 1);
         }
         this.createMergeEffect(tp.slotX, tp.slotY);
     }
@@ -9927,7 +10324,7 @@ class GameScene extends Phaser.Scene {
             }
         }
         this.updateSpawnButton();
-        this.assets.prefetchBattery(this.highestBatteryLevel + 1);
+        this.assets.prefetchAhead(this.highestBatteryLevel + 1);
         this.tweens.killTweensOf(this.levelUpButton);
         this.levelUpButton.setScale(1).setVisible(false);
         this.levelUpButtonVisible = false;
@@ -10181,15 +10578,14 @@ let loadingScreenDone = false;
 let loadingShown = 0;            // never goes back: a batch added mid-load grows
                                  // the total, which would otherwise pull it back
 function setLoadingProgress(v) {
-    if (loadingScreenDone || typeof document === 'undefined') return;
-    loadingShown = Math.max(loadingShown, Math.max(0, Math.min(1, v)));
-    const pct = Math.round(loadingShown * 100);
-    const fill = document.getElementById('loading-fill');
-    const label = document.getElementById('loading-percent');
-    const screen = document.getElementById('loading-screen');
-    if (fill)   fill.style.width = pct + '%';
-    if (label)  label.textContent = pct + '%';
-    if (screen) screen.setAttribute('aria-valuenow', pct);
+    if (loadingScreenDone || typeof window === 'undefined') return;
+    // THE PAGE OWNS THE BAR (see the script in index.html): it starts moving on
+    // the first paint, long before this file exists, and it refuses to go
+    // backwards. Everything here is a request to move it forward.
+    const bar = window.__loading;
+    if (!bar) return;
+    bar.set(Math.max(0, Math.min(1, v)));
+    loadingShown = bar.value();
 }
 function finishLoadingScreen() {
     if (loadingScreenDone) return;
