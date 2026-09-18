@@ -3223,7 +3223,13 @@ var CONFIG = {
                                     // 0.52 is the thickness it had at full width.
                                     // Remove it to follow the art's aspect
                 ALPHA:   1,
-                Y_OFFSET: 0,       // nudge along the line, in tiles (+ = down)
+                Y_OFFSET: 0.02,    // nudge along the line, in tiles (+ = down).
+                                   // ~1px at the drawn tile size: the lip's foot
+                                   // and the revealed trench edge land on the
+                                   // same line and round to pixels separately,
+                                   // which left a hairline of ground showing
+                                   // between them. Overlapping by a hair closes
+                                   // it. Raise it if the seam still shows.
                 DEPTH:   2.16,     // over the ground and its cracks, under the rig
             },
 

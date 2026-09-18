@@ -7945,11 +7945,19 @@ class GameScene extends Phaser.Scene {
         // up the field. It holds its last shape whenever the machine stops.
         if (b.cutEdge) {
             b.cutEdge.setVisible(true).y = faceY + b.edgeDY;
+            // ON GROUND CUT, NOT ON THE CLOCK. Read off wall time it kept
+            // alternating through every pause between bursts — ground breaking
+            // apart at a face nothing was touching. Only frames where the blade
+            // actually advanced move the clock on, so an idle or stalled machine
+            // holds the shape it stopped at.
             const swap = CONFIG.ROAD.TUNNEL.CUT_EDGE.SWAP_MS || 500;
-            const n = Math.floor(time / swap) & 1;
-            if (n !== b.edgeFrame) {
-                b.edgeFrame = n;
-                b.cutEdge.setFrame(n);
+            if (step > 0.01) {
+                b.edgeT = (b.edgeT || 0) + dt * 1000;
+                const n = Math.floor(b.edgeT / swap) & 1;
+                if (n !== b.edgeFrame) {
+                    b.edgeFrame = n;
+                    b.cutEdge.setFrame(n);
+                }
             }
         }
         this._setTrencherRunning(tn, true, step > 0.01);
