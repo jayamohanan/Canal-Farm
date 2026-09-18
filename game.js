@@ -749,8 +749,8 @@ class GameScene extends Phaser.Scene {
 
         // ── The battery case ──────────────────────────────────────────────────
         // One battery holding three cells: a rounded outline around all three, a
-        // divider between each pair — stopped short of the walls, so it reads as
-        // a division and not a bar — and the terminal node off the far end.
+        // PLUS between each pair — the three rates are added to make the total
+        // that drives the machine — and the terminal node off the far end.
         this.batteryCase = null;
         if (caseOn) {
             const sp   = (v) => (v || 0) * scale;
@@ -784,18 +784,74 @@ class GameScene extends Phaser.Scene {
             g.lineStyle(Math.max(1, sp(CS.STROKE || 4)), col, 1);
             g.strokeRoundedRect(left, top, w, h, sp(CS.RADIUS || 14));
 
-            // Dividers cross the case, so they are inset from the SHORT walls and
-            // sit between each pair of cells along the run.
-            const inset = thin * (CS.DIVIDER_INSET !== undefined ? CS.DIVIDER_INSET : 0.22);
-            g.lineStyle(Math.max(1, sp(CS.DIVIDER_W || 3)), col, 1);
-            for (let i = 0; i < 2; i++) {
-                if (vert) {
-                    const dy = (slotYs[i] + slotYs[i + 1]) / 2;
-                    g.lineBetween(left + inset, dy, left + w - inset, dy);
-                } else {
-                    const dx = (slotXs[i] + slotXs[i + 1]) / 2;
-                    g.lineBetween(dx, top + inset, dx, top + h - inset);
+            // A HAIRLINE BETWEEN EACH PAIR, under the plus. The plus says the
+            // three are added; the rule still says where one cell ends and the
+            // next begins. Thin and inset from the walls, so it divides without
+            // reading as three separate boxes — and drawn here, on the case
+            // itself (2.8), so the plus at 13 sits over its middle.
+            const DV = CS.DIVIDER || {};
+            if (DV.ENABLED !== false) {
+                // TWO STUBS, NOT A LINE. Each starts at a wall and reaches LEN of
+                // the case's short side inward, leaving the middle open for the
+                // plus. A division marked at its ends says "these are separate
+                // cells" without drawing a bar through the symbol that says they
+                // are added.
+                const len = thin * (DV.LEN !== undefined ? DV.LEN : 0.10);
+                g.lineStyle(Math.max(1, sp(DV.W !== undefined ? DV.W : 1)), col,
+                            DV.ALPHA !== undefined ? DV.ALPHA : 0.5);
+                for (let i = 0; i < 2; i++) {
+                    if (vert) {
+                        // The battery stands on end: the rule runs across it, so
+                        // its stubs come in from the left and right walls.
+                        const dy = (slotYs[i] + slotYs[i + 1]) / 2;
+                        g.lineBetween(left, dy, left + len, dy);
+                        g.lineBetween(left + w - len, dy, left + w, dy);
+                    } else {
+                        // Lying flat: the rule runs down it, so the stubs come in
+                        // from the top and bottom walls.
+                        const dx = (slotXs[i] + slotXs[i + 1]) / 2;
+                        g.lineBetween(dx, top, dx, top + len);
+                        g.lineBetween(dx, top + h - len, dx, top + h);
+                    }
                 }
+            }
+
+            // A PLUS BETWEEN EACH PAIR, not a rule. A line says "three separate
+            // cells"; a plus says what the readout beneath actually does — the
+            // three rates are ADDED, and the total is what feeds the machine.
+            //
+            // ON ITS OWN GRAPHICS, ABOVE THE CELLS. A filled slot draws a pale
+            // face over its cell (depth 3) and a battery over that (11), and the
+            // plus sits in the gap between two cells where those can reach. Drawn
+            // with the case at 2.8 it would be buried by the first battery
+            // dropped in; at 13 it is over everything the slots hold.
+            const PL = CS.PLUS || {};
+            if (PL.ENABLED !== false) {
+                const pg   = this.add.graphics().setDepth(PL.DEPTH !== undefined ? PL.DEPTH : 13);
+                const arm  = sp(PL.SIZE !== undefined ? PL.SIZE : 13);    // tip to tip
+                const th   = Math.max(1, sp(PL.THICK !== undefined ? PL.THICK : 3));
+                const r    = Math.min(th / 2, sp(PL.RADIUS !== undefined ? PL.RADIUS : 1.5));
+                const sw   = PL.STROKE ? Math.max(1, sp(PL.STROKE_W !== undefined ? PL.STROKE_W : 2)) : 0;
+                const bars = (half, thick, rad) => {
+                    for (let i = 0; i < 2; i++) {
+                        const px = (slotXs[i] + slotXs[i + 1]) / 2;
+                        const py = (slotYs[i] + slotYs[i + 1]) / 2;
+                        pg.fillRoundedRect(px - half, py - thick / 2, half * 2, thick, rad);
+                        pg.fillRoundedRect(px - thick / 2, py - half, thick, half * 2, rad);
+                    }
+                };
+                // OUTLINE FIRST, a larger plus underneath: the symbol sits over
+                // whatever the slots and the ghosted rig put behind it, and an
+                // outline is what keeps it legible against any of them rather
+                // than against one chosen colour.
+                if (sw) {
+                    pg.fillStyle(hexColor(PL.STROKE), PL.ALPHA !== undefined ? PL.ALPHA : 1);
+                    bars(arm / 2 + sw, th + sw * 2, r + sw);
+                }
+                pg.fillStyle(hexColor(PL.COLOR !== undefined ? PL.COLOR : (CS.COLOR || '#364549')),
+                             PL.ALPHA !== undefined ? PL.ALPHA : 1);
+                bars(arm / 2, th, r);
+                this.batteryCasePlus = this._addA ? this._addA(pg) : pg;
             }
 
             // The terminal: NODE_W is its length off the end, NODE_H its width
@@ -937,7 +993,13 @@ class GameScene extends Phaser.Scene {
             // it and the screen edge, and that is where the labels go.
             const outward = (P.PORTRAIT_SIDE || 'right') !== 'left' ? 1 : -1;
             const rateX = vert ? slotX + outward * (ssz / 2 + casePad + labelW / 2) : slotX;
-            const rateY = vert ? slotYi : slotYi - ssz / 2 - casePad - chargeGap;
+            // LANDSCAPE HANGS IT ABOVE THE CASE, so the gap has to be measured
+            // to the text's BOTTOM, not to its middle: centred on this point, a
+            // 22px figure put half its height back over the case's top stroke
+            // and sat on it. The stroke's outer half counts too — it is drawn
+            // centred on the case's edge.
+            const caseEdge = ssz / 2 + casePad + (caseOn ? s(CS.STROKE || 4) / 2 : 0);
+            const rateY = vert ? slotYi : slotYi - caseEdge - chargeGap;
             const SR = CONFIG.PLATFORM.SLOT_RATE || {};
             // The number takes the whole strip: there is no icon beside it (the
             // charge bolt appears once, on the total).
@@ -946,7 +1008,9 @@ class GameScene extends Phaser.Scene {
                 color: SR.COLOR || '#ffffff', fontStyle: CONFIG.FONT_WEIGHT,
                 stroke: SR.STROKE || '#3a2a00',
                 strokeThickness: Math.max(1, Math.round((SR.STROKE_W !== undefined ? SR.STROKE_W : 3) * scale)),
-            }).setOrigin(0.5, 0.5).setDepth(5).setVisible(false);
+            // Bottom-anchored where it hangs above the case (landscape), centred
+            // where it sits beside it (portrait).
+            }).setOrigin(0.5, vert ? 0.5 : 1).setDepth(5).setVisible(false);
 
             this.platforms.push({
                 index: i,
@@ -10024,6 +10088,12 @@ class GameScene extends Phaser.Scene {
         if (!tBat)              this.moveBattery(bd, target.row, target.col);
         else if (tBat === bd)   this.returnBatteryToPosition(bd);
         else if (tBat.level === bd.level) this.mergeBatteries(bd, tBat, target.row, target.col);
+        // FROM A SLOT ONTO AN OCCUPIED CELL. swapBatteries reads both batteries'
+        // grid positions, and one dragged out of a charging slot has none — so
+        // it left the slot's battery lying loose over the cell with the board
+        // believing it was still in its slot. The two change places instead,
+        // which is what the same drag does in the other direction.
+        else if (bd.inChargingSlot) this.swapSlotWithCell(bd, tBat, target.row, target.col);
         else                    this.swapBatteries(bd, tBat);
     }
 
@@ -10069,6 +10139,20 @@ class GameScene extends Phaser.Scene {
             this.assets.prefetchAhead(newLevel + 1);
         }
         this.createMergeEffect(this.gridCells[tRow][tCol].x, this.gridCells[tRow][tCol].y);
+    }
+
+    // A battery dragged out of a CHARGING SLOT onto an occupied grid cell: the
+    // two change places. Both are taken off the board and rebuilt on the other
+    // side, the same way a grid-to-slot swap works — a battery's record carries
+    // where it lives, so moving one is remaking it rather than editing it.
+    swapSlotWithCell(bd, tBat, row, col) {
+        const si = bd.slotIndex, lvSlot = bd.level, lvGrid = tBat.level;
+        const p  = this.platforms[si];
+        this.removeBattery(bd);           // empties the slot it came from
+        if (p && p.chargeRateText) p.chargeRateText.setVisible(false);
+        this.removeBattery(tBat);         // empties the cell it was dropped on
+        this.spawnBatteryInGrid(row, col, lvSlot);
+        this.addBatteryToSlot(si, lvGrid);
     }
 
     swapBatteries(b1, b2) {

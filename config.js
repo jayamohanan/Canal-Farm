@@ -815,12 +815,44 @@ var CONFIG = {
             PAD:      8,               // case wall → cell (px @ design)
             STROKE:   4,               // case outline thickness
             RADIUS:   14,              // case corner radius
-            DIVIDER_W: 3,
-            DIVIDER_INSET: 0.14,       // how far short of each wall a divider
-                                       // stops, as a fraction of case height.
-                                       // Long enough to divide, never touching —
-                                       // a divider that meets the wall reads as
-                                       // three boxes instead of one battery
+            // The hairline between two cells, under the plus: it says where one
+            // cell ends, while the plus says what the three add up to.
+            DIVIDER: {
+                ENABLED: true,
+                W:       2,            // px @ design scale
+                LEN:     0.10,         // each stub's reach from its wall, as a
+                                       // fraction of the case's short side. Two
+                                       // stubs per division — one from each wall
+                                       // — with the middle left open for the plus
+                ALPHA:   1,            // FULL STRENGTH, now that the stubs stop
+                                       // short of the plus: nothing crosses the
+                                       // symbol, so there is nothing to hold them
+                                       // back from reading clearly
+            },
+
+            // ── BETWEEN THE CELLS ───────────────────────────────────────
+            // A plus, not a rule: the three slots' rates are ADDED, and the sum
+            // is the figure that drives the machine. The symbol says that where
+            // a dividing line said the opposite.
+            PLUS: {
+                ENABLED: true,
+                SIZE:    26,           // tip to tip, px @ design scale
+                THICK:   6,
+                RADIUS:  3,            // rounded ends; 0 for square
+                // CREAM, NOT THE CASE'S SLATE. At the case's own colour the
+                // symbol sat in the same tonal range as the ghosted rig behind
+                // the cells and disappeared into it. This is the loading
+                // screen's rim and the roster's label ink — already the game's
+                // colour for "a mark to read", and nowhere in the machine art.
+                COLOR:   '#fff3d6',
+                STROKE:  '#2b2013',    // thin dark outline, so it stays legible
+                STROKE_W: 2,           // over the cells, the batteries and the
+                                       // ghost rig alike. '' or 0 for none
+                ALPHA:   1,
+                DEPTH:   13,           // OVER a filled cell's face and its
+                                       // battery, so the symbol is never buried
+                                       // by whatever is dropped beside it
+            },
             NODE_W:   14,              // the terminal sticking out on the right
             NODE_H:   0.38,            // as a fraction of the case height
             NODE_GAP: 4,               // gap between the case and its terminal, so
@@ -919,7 +951,11 @@ var CONFIG = {
         // turn right and scaled so the whole rig spans the case's width.
         TRENCHER_DECO: {
             ENABLED:  true,
-            ALPHA:    0.4,
+            ALPHA:    0.2,             // FAINT. It is a watermark saying what the
+                                       // batteries are for, not a picture of the
+                                       // machine — at 0.4 it competed with the
+                                       // cells, the plus and the batteries that
+                                       // sit over it
             ANGLE:    -90,             // quarter-turn LEFT: the rig's nose (north
                                        // in the field) points away from the
                                        // terminal, so the belt sits at the
